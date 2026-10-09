@@ -198,3 +198,102 @@ class TestMerge:
         twin = dict(ARBEITSAGENTUR, job_id="other")
         merged = dedup.merge_group([ARBEITSAGENTUR, twin])
         assert len(merged["alt_sources"]) == 0   # same URL as the survivor
+
+
+DELOITTE_TEXT = ("Als Consultant im Bereich Data Engineering baust du Datenplattformen "
+                 "für unsere Kunden auf, entwickelst Pipelines mit Spark und Databricks "
+                 "und berätst zu Architektur, Governance und Cloud-Migration.")
+
+
+def _deloitte(job_id, title, city, text=DELOITTE_TEXT, **extra):
+    return dict({"job_id": job_id, "provider": "linkedin", "company": "Deloitte",
+                 "job_title": title, "location": f"{city}, Germany", "description": text,
+                 "job_url": f"https://www.linkedin.com/jobs/view/{job_id}/",
+                 "resume_score": 40}, **extra)
+
+
+class TestOfficeInTheTitle:
+    """One posting listed once per office, the office in the title. Deloitte alone
+    had 16 such groups, 42 rows, in the queue at once - each scored separately."""
+
+    @pytest.mark.parametrize("title, location", [
+        ("Consultant Data Engineering (m/w/d) in Hamburg", "Hamburg, Germany"),
+        ("Consultant Data Engineering (m/w/d) in Frankfurt (Main)", "Frankfurt, Hesse"),
+        ("Consultant Data Engineering (m/w/d), Ismaning", "Ismaning, Bayern"),
+        ("Consultant Data Engineering (m/w/d) am Standort Mannheim", "Mannheim"),
+        ("Consultant Data Engineering - Berlin", "Berlin, Germany"),
+        ("Consultant Data Engineering (Remote)", None),
+        ("Consultant Data Engineering (m/w/d) in Berlin oder München", None),
+        ("Consultant Data Engineering for Hamburg", None),
+        ("Consultant Data Engineering", "Munich, Bavaria, Germany"),
+    ])
+    def test_the_office_is_not_part_of_the_role(self, title, location):
+        assert dedup.title_key(title, location) == "consultant data engineering"
+
+    def test_the_own_city_matches_in_its_other_language(self):
+        assert dedup.title_key("Data Engineer in München", "Munich, Bavaria") == "data engineer"
+
+    def test_a_city_inside_a_name_is_left_alone(self):
+        assert dedup.title_key("Hamburg Commercial Bank Data Analyst") == \
+            "hamburg commercial bank data analyst"
+
+    def test_a_title_that_is_only_a_place_keeps_it(self):
+        assert dedup.title_key("Berlin") == "berlin"
+
+    def test_copies_in_different_cities_are_one_posting(self):
+        jobs = [_deloitte("1", "Consultant Data Engineering (m/w/d) in Hamburg", "Hamburg"),
+                _deloitte("2", "Consultant Data Engineering (m/w/d) in Stuttgart", "Stuttgart"),
+                _deloitte("3", "Consultant Data Engineering (m/w/d)", "Berlin")]
+        assert [len(g) for g in dedup.group_duplicates(jobs)] == [3]
+
+    def test_the_scrape_time_key_matches_across_offices(self):
+        assert (dedup.identity_key("Deloitte", "Consultant Data Engineering (m/w/d) in Hamburg",
+                                   "Hamburg, Germany")
+                == dedup.identity_key("Deloitte GmbH", "Consultant Data Engineering (m/w/d)",
+                                      "Berlin, Germany"))
+
+    def test_two_roles_sharing_boilerplate_stay_separate(self):
+        """'Data Engineering' is a subset of 'Data Science & ML Engineering', and the
+        firm's boilerplate put their texts at 0.67. Merging hid a real role."""
+        other_text = DELOITTE_TEXT.replace("Data Engineering", "Data Science & ML Engineering") \
+            + " Du trainierst Modelle, evaluierst sie und bringst sie in Produktion mit MLflow."
+        assert 0.6 <= dedup.description_similarity(DELOITTE_TEXT, other_text) < 0.9
+        jobs = [_deloitte("1", "Consultant Data Engineering (m/w/d) in Hamburg", "Hamburg"),
+                _deloitte("2", "Consultant Data Science & ML Engineering (m/w/d) in Hamburg",
+                          "Hamburg", text=other_text)]
+        assert dedup.group_duplicates(jobs) == []
+
+
+class TestCompanyNameVariants:
+    @pytest.mark.parametrize("left, right", [
+        ("RENK GmbH", "RENK Group"),
+        ("Bertrandt AG", "Bertrandt Group"),
+        ("NetCologne", "NetCologne Gesellschaft für Telekommunikation mbH"),
+        ("AraCom", "AraCom-Gruppe"),
+        ("Capgemini Deutschland GmbH", "Capgemini"),
+        ("K+S Aktiengesellschaft", "K+S"),
+    ])
+    def test_one_employer_under_two_names(self, left, right):
+        assert dedup.normalize_company(left) == dedup.normalize_company(right)
+
+    def test_a_name_made_only_of_noise_keeps_it(self):
+        assert dedup.normalize_company("Deutschland Group") == "deutschland group"
+
+
+class TestWhichCopyIsKept:
+    def test_the_best_scoring_city_wins_between_copies_on_one_board(self):
+        group = [_deloitte("low", "Consultant Data Engineering in Hamburg", "Hamburg", resume_score=25),
+                 _deloitte("high", "Consultant Data Engineering in Munich", "Munich", resume_score=52)]
+        assert dedup.choose_survivor(group)["job_id"] == "high"
+
+    def test_a_dismissed_copy_is_kept_over_an_untouched_one(self):
+        group = [_deloitte("new", "Consultant Data Engineering", "Hamburg", resume_score=60),
+                 _deloitte("dismissed", "Consultant Data Engineering", "Munich",
+                           dismissed_at="2026-10-01T00:00:00+00:00")]
+        assert dedup.choose_survivor(group)["job_id"] == "dismissed"
+
+    def test_the_link_is_not_swapped_for_another_citys_copy(self):
+        """Same board, so the kept row's own link is the right one for its city."""
+        group = [_deloitte("low", "Consultant Data Engineering in Hamburg", "Hamburg", resume_score=25),
+                 _deloitte("high", "Consultant Data Engineering in Munich", "Munich", resume_score=52)]
+        assert dedup.merge_group(group)["apply_url"] is None

@@ -36,6 +36,11 @@ DESCRIPTION_SIMILARITY_THRESHOLD = 0.30
 # one employer, two genuinely different openings. A false merge hides a job
 # permanently, which is worse than leaving a duplicate in the queue.
 STRICT_SIMILARITY_THRESHOLD = 0.60
+# The weakest path - one title is the other plus words - needs the text to be the
+# same posting, not the same employer. At 0.60 it merged Deloitte's 'Consultant
+# Data Engineering' into 'Consultant Data Science & ML Engineering' in five cities:
+# two roles sharing a firm's boilerplate (0.67). Real copies measured 0.95-1.00.
+SUBSET_TITLE_SIMILARITY_THRESHOLD = 0.90
 
 _LEGAL_SUFFIXES = re.compile(
     r"\b(gmbh\s*&\s*co\.?\s*kgaa|gmbh\s*&\s*co\.?\s*kg|gmbh|mbh|ag|se|kgaa|kg|ohg|ug|e\.?\s?v|"
@@ -67,13 +72,27 @@ _STOPWORDS = {
 }
 
 
+# Words that name the same employer differently on different boards: 'RENK GmbH'
+# and 'RENK Group', 'Bertrandt AG' and 'Bertrandt Group', 'NetCologne' and
+# 'NetCologne Gesellschaft für Telekommunikation mbH'. Each pair was in the queue
+# twice with the same posting under it.
+_COMPANY_NOISE = re.compile(
+    r"\b(?:aktiengesellschaft|group|gruppe|holding|deutschland|germany)\b"
+    r"|\bgesellschaft\s+f(?:ü|ue)r\b.*$",
+)
+
+
 def normalize_company(value: Optional[str]) -> str:
     """'eWolff GmbH & Co. KG' and 'ewolff' collapse to the same key."""
     text = (value or "").lower()
     text = re.sub(r"[.,]", " ", text)
     text = _LEGAL_SUFFIXES.sub(" ", text)
     text = re.sub(r"[^a-z0-9äöüß ]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    # Never strip a name down to nothing: a company called 'Deutschland Group'
+    # still needs an identity.
+    stripped = re.sub(r"\s+", " ", _COMPANY_NOISE.sub(" ", text)).strip()
+    return stripped or text
 
 
 def normalize_title(value: Optional[str]) -> str:
@@ -97,6 +116,94 @@ def normalize_location(value: Optional[str]) -> str:
     text = re.sub(r"\b\d{4,5}\b", " ", text)          # postcodes
     text = re.sub(r"[^a-z0-9äöüß ]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+# The same posting, listed once per office, with the office in the title:
+# 'Consultant Data Engineering (m/w/d) in Hamburg', '... in Stuttgart', '... in
+# Frankfurt (Main)'. Deloitte alone had 16 such groups, 42 rows, in the queue at
+# once - each scored separately. The job's own city is the reliable thing to strip
+# (it names small towns no list would hold); these cover a title that names an
+# office other than the one in its location field.
+_BIG_CITIES = (
+    "berlin", "hamburg", "münchen", "munich", "köln", "cologne", "frankfurt am main",
+    "frankfurt", "stuttgart", "düsseldorf", "dortmund", "essen", "leipzig", "bremen",
+    "dresden", "hannover", "hanover", "nürnberg", "nuremberg", "duisburg", "bochum",
+    "wuppertal", "bielefeld", "bonn", "münster", "mannheim", "karlsruhe", "augsburg",
+    "wiesbaden", "aachen", "kiel", "braunschweig", "chemnitz", "halle", "magdeburg",
+    "freiburg", "mainz", "lübeck", "erfurt", "rostock", "kassel", "potsdam",
+    "heidelberg", "darmstadt", "regensburg", "ingolstadt", "würzburg", "ulm",
+    "heilbronn", "wolfsburg", "göttingen", "jena", "erlangen", "eschborn",
+)
+# Where-you-work words that differ between copies of one posting.
+_WORKPLACE_WORDS = ("remote", "hybrid", "deutschlandweit", "bundesweit", "germany",
+                    "deutschland", "dach")
+_CITY_ALIASES = {
+    "munich": "münchen", "münchen": "munich", "cologne": "köln", "köln": "cologne",
+    "nuremberg": "nürnberg", "nürnberg": "nuremberg", "hanover": "hannover",
+    "hannover": "hanover",
+}
+# A city introduced by one of these is a location, not part of the role. Without
+# a marker only a city at the very end of the title is stripped, so 'Hamburg
+# Commercial Bank Data Analyst' keeps its name.
+_MARKER = (r"(?:\b(?:(?:am\s+)?standort|in|bei|am|im|für|for|location|based\s+in|oder|or|und|and)\s+"
+           r"|[-–—|,/(]\s*)")
+_CITY_SUFFIX = r"(?:\s*\(\s*(?:main|oder|saale|breisgau|rhein)\s*\))?\)?"
+
+
+def _own_cities(location: Optional[str]) -> set:
+    """The city a posting's location names, in the spellings a title might use."""
+    city = normalize_location(location)
+    city = re.sub(r"^greater\s+|\s+(?:metropolitan\s+area|region|area)$", "", city).strip()
+    if len(city) < 3:
+        return set()
+    names = {city}
+    # 'Frankfurt am Main' is titled 'Frankfurt (Main)'; 'Freiburg im Breisgau', 'Freiburg'.
+    head = re.split(r"\s+(?:am|an\s+der|im|in|ob\s+der)\s+", city)[0]
+    if len(head) >= 4:
+        names.add(head)
+    names |= {_CITY_ALIASES[n] for n in list(names) if n in _CITY_ALIASES}
+    return names
+
+
+def strip_location(title: Optional[str], location: Optional[str] = None) -> str:
+    """The title without the office it names: 'Data Engineer in Hamburg' -> 'Data Engineer'."""
+    text = title or ""
+    own = _own_cities(location)
+    alternation = "|".join(re.escape(c) for c in sorted(own | set(_BIG_CITIES) | set(_WORKPLACE_WORDS),
+                                                        key=len, reverse=True))
+    marked = re.compile(rf"{_MARKER}(?:100\s*%\s*)?(?:{alternation})\b{_CITY_SUFFIX}", re.IGNORECASE)
+    trailing = re.compile(rf"\s+(?:{alternation})\b{_CITY_SUFFIX}\s*$", re.IGNORECASE)
+    # The posting's own city goes wherever it sits - it is never part of the role.
+    anywhere = (re.compile(rf"\b(?:{'|'.join(re.escape(c) for c in own)})\b{_CITY_SUFFIX}",
+                           re.IGNORECASE) if own else None)
+    # Repeated, because offices come in lists: 'in Berlin oder München', 'Berlin / Hamburg'.
+    for _ in range(4):
+        before = text
+        text = marked.sub(" ", text)
+        text = trailing.sub(" ", text)
+        if anywhere is not None:
+            text = anywhere.sub(" ", text)
+        text = re.sub(r"\bam\s+standort\b|\bstandort\b", " ", text, flags=re.IGNORECASE)
+        if text == before:
+            break
+    return text
+
+
+def title_key(title: Optional[str], location: Optional[str] = None) -> str:
+    """The title as identity sees it: normalised, and without the office it names."""
+    key = normalize_title(strip_location(title, location))
+    # A title that was nothing but a place ('Berlin') keeps what it had.
+    return key or normalize_title(title)
+
+
+def identity_key(company: Optional[str], title: Optional[str],
+                 location: Optional[str] = None) -> Tuple[str, str]:
+    """(company, title) as every dedup check in the pipeline compares them.
+
+    One function so the scrapers, the stored tombstones and the cleanup can never
+    disagree on what counts as the same posting.
+    """
+    return normalize_company(company), title_key(title, location)
 
 
 def _content_words(text: Optional[str]) -> set:
@@ -181,8 +288,8 @@ def is_duplicate(left: Dict[str, Any], right: Dict[str, Any],
     if canonical_key(left) != canonical_key(right) or not canonical_key(left)[0]:
         return False
 
-    compatible, exact = _titles_match(normalize_title(left.get("job_title")),
-                                     normalize_title(right.get("job_title")))
+    compatible, exact = _titles_match(title_key(left.get("job_title"), left.get("location")),
+                                     title_key(right.get("job_title"), right.get("location")))
     if not compatible:
         return False
 
@@ -196,7 +303,7 @@ def is_duplicate(left: Dict[str, Any], right: Dict[str, Any],
     similarity = description_similarity(left.get("description"), right.get("description"))
     if exact:
         return similarity >= max(threshold, STRICT_SIMILARITY_THRESHOLD)
-    return same_city and similarity >= max(threshold, STRICT_SIMILARITY_THRESHOLD)
+    return same_city and similarity >= max(threshold, SUBSET_TITLE_SIMILARITY_THRESHOLD)
 
 
 def group_duplicates(jobs: Iterable[Dict[str, Any]],
@@ -242,20 +349,30 @@ def has_application_history(job: Dict[str, Any]) -> bool:
     return bool(job.get("application_stage")) or job.get("status") == "applied"
 
 
+def was_acted_on(job: Dict[str, Any]) -> bool:
+    """Applied to or dismissed. Either is a decision the row is the only record of."""
+    return (has_application_history(job) or bool(job.get("application_date"))
+            or bool(job.get("dismissed_at")))
+
+
 def choose_survivor(group: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Which row to keep.
 
     Application history outranks everything: that row records where the application
-    actually went, and merging it away would lose the only copy of that fact. After
-    that, the row nearest the employer, then one that already carries a score (so a
-    merge does not throw away an LLM call), then the fullest description.
+    actually went, and merging it away would lose the only copy of that fact. A
+    dismissal comes next, for the same reason. After that, the row nearest the
+    employer, then one that already carries a score (so a merge does not throw away
+    an LLM call) - the highest one, since copies of one posting in different cities
+    score differently on location - then the fullest description.
     """
     return sorted(
         group,
         key=lambda job: (
             not has_application_history(job),
+            not was_acted_on(job),
             _source_rank(job),
             job.get("resume_score") is None,
+            -(job.get("resume_score") or 0),
             -len(job.get("description") or ""),
             str(job.get("scraped_at") or ""),
         ),
@@ -296,8 +413,14 @@ def merge_group(group: List[Dict[str, Any]]) -> Dict[str, Any]:
         })
 
     best_url = preferred_apply_url(group)
+    best_rank = min((_source_rank(job) for job in group if job.get("job_url") == best_url),
+                    default=UNKNOWN_SOURCE_PRIORITY)
     apply_url = None
-    if best_url and best_url != survivor.get("job_url") and not has_application_history(survivor):
+    # Only a strictly nearer source earns the swap. Between two copies from one
+    # board the survivor's own link is right - the others are the same ad for
+    # another city, and the kept row describes the city its own link points at.
+    if (best_url and best_url != survivor.get("job_url") and not has_application_history(survivor)
+            and best_rank < _source_rank(survivor)):
         apply_url = best_url
 
     return {

@@ -24,7 +24,8 @@ BACKUP_DIR = "output/dedup_backups"
 
 
 BASE_COLUMNS = ("job_id, provider, company, job_title, location, description, "
-                "job_url, scraped_at, resume_score, application_stage, status, score_breakdown")
+                "job_url, scraped_at, resume_score, application_stage, status, score_breakdown, "
+                "application_date, dismissed_at")
 
 
 def fetch_all_jobs() -> tuple:
@@ -107,7 +108,10 @@ def main(argv=None) -> int:
         if merged["apply_url"]:
             payload["job_url"] = merged["apply_url"]
         updates.append((survivor, payload))
-        to_delete.extend(merged["duplicates"])
+        # A copy you applied to or dismissed is kept even when it is a duplicate:
+        # it is the only record of that decision. It stays out of the queue anyway,
+        # because the queue shows neither applied nor dismissed rows.
+        to_delete.extend(row for row in merged["duplicates"] if not dedup.was_acted_on(row))
 
         logging.info(
             f"  keep {survivor.get('provider')}/{survivor.get('job_id')} "

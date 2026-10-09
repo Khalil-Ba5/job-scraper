@@ -30,7 +30,7 @@ def get_existing_jobs_from_supabase(batch_size: int = 1000) -> tuple[set, set]:
         while True:
             response = (
                 supabase.table(config.SUPABASE_TABLE_NAME)
-                .select("job_id, company, job_title")
+                .select("job_id, company, job_title, location")
                 .range(offset, offset + batch_size - 1)
                 .execute()
             )
@@ -53,7 +53,7 @@ def get_existing_jobs_from_supabase(batch_size: int = 1000) -> tuple[set, set]:
                     # arrives as "YPOG GmbH"/"AI/ML Engineer (m/w/d)" from one source
                     # and "YPOG"/"AI/ML Engineer" from another, and a raw lowercase
                     # key treats those as two different jobs. See dedup.py.
-                    key = (dedup.normalize_company(company), dedup.normalize_title(job_title))
+                    key = dedup.identity_key(company, job_title, item.get("location"))
                     if all(key):
                         existing_company_title_keys.add(key)
 
@@ -779,6 +779,8 @@ VALID_DELETE_REASONS = {
     # list is what YOU can say about a posting, and "it scored badly" is the
     # pipeline's judgement rather than yours.
     "below_score_floor",
+    # Written by maintenance.purge_freelance, for the same reason.
+    "freelance",
 }
 
 
@@ -833,7 +835,7 @@ def delete_job(job: Dict[str, Any], reason: Optional[str] = None,
 
     company = job.get("company") or ""
     title = job.get("job_title") or ""
-    key = (dedup.normalize_company(company), dedup.normalize_title(title))
+    key = dedup.identity_key(company, title, job.get("location"))
     tombstone = {
         "job_id": job_id,
         "company": company,

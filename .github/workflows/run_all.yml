@@ -159,6 +159,27 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python -m maintenance.job_manager
 
+      # The scrapers drop a repost at the door, but only against what is already
+      # stored - this catches the copies that land in the same run, and any the
+      # identity rule newly recognises. Keeps the best-scoring copy; never deletes
+      # one you applied to or dismissed. Never fatal, like the purge below.
+      - name: Merge duplicate jobs
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python -m maintenance.dedup_existing --apply
+
+      # Freelance and contract postings the scrapers' filter missed or predates.
+      # Same rules as the low-score purge: untouched rows only, tombstoned.
+      - name: Remove freelance jobs
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PURGE_LIMIT: ${{ vars.PURGE_LIMIT }}
+        run: python -m maintenance.purge_freelance
+
       # After scoring, so the rows it removes have a score to judge them by.
       # Only touches postings nobody acted on - never an applied job, never a
       # dismissal, because those carry decisions and a low score is not a reason

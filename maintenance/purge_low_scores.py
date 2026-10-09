@@ -56,7 +56,8 @@ def find_purgeable(min_score: int, limit: int) -> List[Dict[str, Any]]:
     try:
         query = (
             supabase_utils.supabase.table(config.SUPABASE_TABLE_NAME)
-            .select("job_id, job_title, company, resume_score, score_breakdown")
+            # location: the tombstone's dedup key strips the office from the title.
+            .select("job_id, job_title, company, location, resume_score, score_breakdown")
             .lt("resume_score", min_score)
             .eq("status", "new")
             .is_("application_date", None)

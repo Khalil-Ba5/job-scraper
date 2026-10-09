@@ -60,9 +60,33 @@ _FREELANCE_RE = re.compile(
     re.IGNORECASE,
 )
 
-def is_freelance_role(title: str | None, level: str | None = None) -> bool:
-    """True if the job title or seniority level indicates a freelance/contractor/self-employed role."""
-    return bool(_FREELANCE_RE.search(title or "")) or bool(_FREELANCE_RE.search(level or ""))
+# The description says it when the title does not ('Machine Learning Engineer' at
+# Alignerr: "a fully remote, flexible contract role ... Freelance autonomy"). Only
+# phrases that cannot mean anything else. The title pattern above is NOT reused
+# here: 'selbstständig' in an ad body is "you work independently" - 76 of 88
+# description hits in the queue, every one a permanent job - and 'freelancers' is
+# as often the product's users as the contract type.
+_FREELANCE_DESC_RE = re.compile(
+    r"\b(?:freelance|freelancer)[- ](?:role|position|basis|contract|project|opportunity|assignment)"
+    r"|\bon a freelance basis\b"
+    r"|\bals freelancer\b"
+    r"|\bfreelance autonomy\b"
+    r"|\bfreiberufliche[nr]?\s+(?:basis|tätigkeit|mitarbeit|zusammenarbeit)"
+    r"|\bauf\s+(?:honorar|freiberuflicher)\s*basis\b|\bhonorarbasis\b"
+    r"|\bindependent contractor\b"
+    # Not 'contract position/basis': "a permanent contract position" is employment.
+    r"|\bcontract role\b|\bcontractor[- ](?:role|position|basis|assignment)\b"
+    r"|\bhourly (?:rate|pay)\b|\bpaid (?:per|by the) hour\b"
+    r"|[$€£]\s?\d+(?:\.\d+)?\s?(?:/|per\s)\s?(?:hr|hour|stunde)\b",
+    re.IGNORECASE,
+)
+
+
+def is_freelance_role(title: str | None, level: str | None = None,
+                      description: str | None = None) -> bool:
+    """True if the title, level or description says freelance/contract/self-employed."""
+    return (bool(_FREELANCE_RE.search(title or "")) or bool(_FREELANCE_RE.search(level or ""))
+            or bool(_FREELANCE_DESC_RE.search(description or "")))
 
 _RELATIVE_TIME_RE = re.compile(
     r"(\d+)\+?\s*(minute|hour|day|week|month|minuten?|stunden?|tag(?:en)?|wochen?|monat(?:en)?)",
@@ -510,13 +534,15 @@ def process_linkedin_query(search_query: str, location: str, limit: int = None,
                 logging.info(f"Skipping internship/thesis job: {details.get('job_title')} (ID: {job_id})")
                 _filtered("internship")
                 continue
-            if is_freelance_role(details.get('job_title'), details.get('level')):
+            if is_freelance_role(details.get('job_title'), details.get('level'),
+                                 details.get('description')):
                 logging.info(f"Skipping freelance/contract job: {details.get('job_title')} (ID: {job_id})")
                 _filtered("freelance")
                 continue
             details['program_type'] = program_type_of(details.get('job_title'))
-            company_title_key = (dedup.normalize_company(details.get('company')),
-                                 dedup.normalize_title(details.get('job_title')))
+            company_title_key = dedup.identity_key(details.get('company'),
+                                                   details.get('job_title'),
+                                                   details.get('location'))
             if all(company_title_key) and company_title_key in company_title_set:
                 logging.info(f"Skipping repost (company/title already in DB): {details.get('job_title')} @ {details.get('company')} (ID: {job_id})")
                 _filtered("repost_same_company_title")

@@ -1,4 +1,6 @@
-from sources.scraper import convert_html_to_markdown
+import pytest
+
+from sources.scraper import convert_html_to_markdown, is_freelance_role
 
 
 class TestConvertHtmlToMarkdown:
@@ -183,3 +185,34 @@ class TestLinkedInCountersPartitionFetched:
 
         assert outcome.filtered_out.get("detail_fetch_failed") == 5
         assert outcome.unaccounted == 0
+
+
+class TestFreelanceInTheDescription:
+    """The title often says nothing; the body says it plainly."""
+
+    @pytest.mark.parametrize("text", [
+        "This is a fully remote, flexible contract role built for ML practitioners.",
+        "Freelance autonomy with the structure of meaningful work.",
+        "Wir suchen dich auf Honorarbasis für ein Projekt.",
+        "Zusammenarbeit auf freiberuflicher Basis.",
+        "You will work as an independent contractor.",
+        "Pay: $45/hr, paid weekly.",
+        "Competitive hourly rate.",
+    ])
+    def test_a_freelance_description_is_caught(self, text):
+        assert is_freelance_role("Machine Learning Engineer", None, text)
+
+    @pytest.mark.parametrize("text", [
+        "Selbstständige, strukturierte Arbeitsweise und Teamfähigkeit.",
+        "Du arbeitest selbstständig und lösungsorientiert.",
+        "Ein hohes Maß an Selbstständigkeit und Motivation.",
+        "Our platform connects companies with freelancers across Europe.",
+        "Unbefristeter Arbeitsvertrag, a permanent contract position in Berlin.",
+        "Define work packages for subcontractors and review deliverables.",
+        "Erfahrung im B2B-Handel.",
+    ])
+    def test_a_permanent_job_is_not(self, text):
+        assert not is_freelance_role("Data Scientist (m/w/d)", None, text)
+
+    def test_the_title_rule_still_applies_without_a_description(self):
+        assert is_freelance_role("Freelance Data Engineer")

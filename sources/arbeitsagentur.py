@@ -259,10 +259,10 @@ def process_query(query: str, limit: Optional[int] = None, outcome=None) -> List
         _filtered("over_per_query_limit", len(candidates) - limit)
         candidates = candidates[:limit]
 
-    def _company_title_key(company, title):
+    def _company_title_key(company, title, location=None):
         # Same normalization the rest of the pipeline uses, so a repost is caught
         # whichever source it arrives from. See dedup.py.
-        return dedup.normalize_company(company), dedup.normalize_title(title)
+        return dedup.identity_key(company, title, location)
 
     records = []
     for offer in candidates:
@@ -270,7 +270,8 @@ def process_query(query: str, limit: Optional[int] = None, outcome=None) -> List
         # reference-number dedup alone is not enough — it is why one YPOG opening
         # landed in the database three times. Checked before the detail fetch, since
         # unlike LinkedIn the search payload already carries employer and title.
-        key = _company_title_key(offer.get("firma"), offer.get("stellenangebotsTitel"))
+        key = _company_title_key(offer.get("firma"), offer.get("stellenangebotsTitel"),
+                                 _location_of(offer))
         if all(key) and key in existing_company_titles:
             logging.info(f"Skipping repost (company/title already known): "
                          f"{offer.get('stellenangebotsTitel')} @ {offer.get('firma')}")
@@ -305,7 +306,8 @@ def process_query(query: str, limit: Optional[int] = None, outcome=None) -> List
             logging.info(f"Skipping internship/thesis job: {record.get('job_title')}")
             _filtered("internship")
             continue
-        if is_freelance_role(record.get("job_title"), record.get("level")):
+        if is_freelance_role(record.get("job_title"), record.get("level"),
+                             record.get("description")):
             logging.info(f"Skipping freelance/contract job: {record.get('job_title')}")
             _filtered("freelance")
             continue
@@ -313,7 +315,8 @@ def process_query(query: str, limit: Optional[int] = None, outcome=None) -> List
 
         # Re-checked against the normalized values: the detail payload's title can
         # differ from the search payload's for the same posting.
-        key = _company_title_key(record.get("company"), record.get("job_title"))
+        key = _company_title_key(record.get("company"), record.get("job_title"),
+                                 record.get("location"))
         if all(key) and key in existing_company_titles:
             logging.info(f"Skipping repost (company/title already known): "
                          f"{record.get('job_title')} @ {record.get('company')}")
