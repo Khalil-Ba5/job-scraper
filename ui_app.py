@@ -1695,7 +1695,7 @@ def render_generate_cv_page():
 
     head = st.columns([3.4, 1.2], vertical_alignment="top")
     with head[0]:
-        html(T.kicker("Writing a CV for", T.PURPLE[700]))
+        html(T.kicker("Writing for", T.PURPLE[700]))
         choice = st.selectbox("Job posting", options, key="tailor_choice",
                               label_visibility="collapsed")
     with head[1]:
@@ -1748,8 +1748,8 @@ def render_generate_cv_page():
                 html(T.kicker("The result")
                      + f'<div style="font-size:14.5px;line-height:1.6;color:{T.NEUTRAL[800]}">Nothing '
                        'written for this posting yet. Fill the gaps on the left, then generate — you '
-                       'get a CV and an Anschreiben written only from facts about you, argued over '
-                       'by a hiring manager until the objections run out.</div>')
+                       'get a CV, an Anschreiben, or both, written only from facts about you, argued '
+                       'over by a hiring manager until the objections run out.</div>')
                 citable = base.citable()
                 st.caption(f"Fact base: {len(citable)} facts "
                            f"({sum(1 for f in citable if f.tier == 4)} true but not yet on your CV). "
@@ -1938,6 +1938,12 @@ def render_generate_step(job, base, saved):
         # and this page reruns constantly — finding gaps, saving an answer, opening
         # the fact base. Dragging the slider to 4 and then touching anything else
         # snapped it back to 2, which read as the slider being stuck.
+        # Keyed for the same reason as the slider below. Writing only what you
+        # will send is also the cheaper run: every round writes, checks and
+        # reviews just that document.
+        mode = st.radio("What to write", tailor_documents.MODES, key="tailor_mode",
+                        horizontal=True,
+                        format_func=lambda m: tailor_documents.MODE_LABELS[m])
         rounds = st.slider("Rounds of review", 1, 5, tailor_settings.MAX_ROUNDS,
                            key="tailor_rounds",
                            help="Past round two the models largely converge on each other, "
@@ -1949,15 +1955,19 @@ def render_generate_step(job, base, saved):
                  "those — the writer may only use facts it can cite — so without this "
                  "they survive every remaining round. The run pauses until you answer, "
                  "and what you add is kept for every future application.")
+        # The head-to-head scores CVs, so a letter-only run has nothing to score.
         score_it = st.checkbox(
             "Score old vs new afterwards", value=True, key="tailor_score_it",
+            disabled=mode == "letter",
             help="Scores your current CV and the tailored one head to head, once, after "
                  "the loop and never inside it — feeding a score back into the writer "
-                 "would make it optimise against the same model that measures it.")
+                 "would make it optimise against the same model that measures it. "
+                 "Not available for a cover letter on its own.") and mode != "letter"
 
-        label = "Generate again" if saved else "Generate CV and cover letter"
+        label = {"both": "Write CV and cover letter", "cv": "Write the CV",
+                 "letter": "Write the cover letter"}[mode] + (" again" if saved else "")
         if st.button(label, key="generate_cv", type="primary" if not saved else "secondary"):
-            run_generation(job, base, rounds, score_it, probe=probe)
+            run_generation(job, base, rounds, score_it, probe=probe, mode=mode)
 
         # Acted on here rather than inside the result renderer, because continuing
         # needs the job, the fact base and the personal details, and the renderer is
@@ -1974,7 +1984,7 @@ def render_generate_step(job, base, saved):
 
 
 def run_generation(job, base, rounds, score_it, resume=None, prior_rounds=None,
-                   probe=False):
+                   probe=False, mode="both"):
     """Drive the loop, streaming progress, then persist the result."""
     status = st.empty()
     with st.spinner("Writing…"):
@@ -1983,6 +1993,7 @@ def run_generation(job, base, rounds, score_it, resume=None, prior_rounds=None,
             # range() will not take one.
             job, base, tailor_store.personal_details(), max_rounds=int(rounds),
             progress=lambda msg: status.caption(msg), resume=resume, probe=probe,
+            mode=mode,
         )
     status.empty()
 
@@ -1992,7 +2003,7 @@ def run_generation(job, base, rounds, score_it, resume=None, prior_rounds=None,
 
     # Scoring a paused run would price a draft that is about to be rewritten with
     # facts it has not seen, and it is the expensive half of the whole page.
-    if score_it and not result.awaiting_answers:
+    if score_it and not result.awaiting_answers and result.application.cv is not None:
         with st.spinner("Scoring the original and the tailored CV head to head…"):
             result.score_before, result.score_after, result.score_note = (
                 tailor_loop.holdout_compare(
@@ -2137,15 +2148,18 @@ def render_generated_application(saved):
                  f'<div style="font-size:13px;line-height:1.55;color:{T.NEUTRAL[700]};margin-bottom:14px">'
                  f'{T.esc(saved.get("score_note") or "Both CVs scored against this posting in one holdout call, after the loop finished — never fed back into the writer.")}</div>')
 
-        cv_tab, letter_tab = st.tabs(["CV", "Anschreiben"])
-        with cv_tab:
-            st.code(saved.get("cv_text", ""), language=None, wrap_lines=True)
-            st.download_button("Download CV", saved.get("cv_text", ""),
-                               file_name=f"CV_{saved['job']['company']}.txt", type="primary")
-        with letter_tab:
-            st.code(saved.get("cover_letter_text", ""), language=None, wrap_lines=True)
-            st.download_button("Download Anschreiben", saved.get("cover_letter_text", ""),
-                               file_name=f"Anschreiben_{saved['job']['company']}.txt", type="primary")
+        # A tab only for a document that exists: an empty "Anschreiben" tab next to a
+        # CV-only run reads as a failed generation.
+        docs = [(name, text, prefix) for name, text, prefix in (
+            ("CV", saved.get("cv_text", ""), "CV"),
+            ("Anschreiben", saved.get("cover_letter_text", ""), "Anschreiben"),
+        ) if text]
+        for tab, (name, text, prefix) in zip(st.tabs([d[0] for d in docs]) if docs else [], docs):
+            with tab:
+                st.code(text, language=None, wrap_lines=True)
+                st.download_button(f"Download {name}", text,
+                                   file_name=f"{prefix}_{saved['job']['company']}.txt",
+                                   type="primary", key=f"download_{prefix}_{job_id}")
 
         if saved.get("application"):
             cols = st.columns([1, 1.3], vertical_alignment="center")

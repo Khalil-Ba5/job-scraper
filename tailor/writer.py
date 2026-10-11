@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from tailor import settings
-from tailor.documents import Application
+from tailor.documents import Application, mode_of, response_model
 from tailor.facts import FactBase
 
 SYSTEM_PROMPT = """You write a CV and a German-market cover letter (Anschreiben) \
@@ -199,25 +199,38 @@ def _system(base: FactBase, personal: Dict[str, Any], extra: str = "") -> List[s
     return [stable, extra] if extra else [stable]
 
 
+# Which documents to write. In the user message, not the system prompt: the
+# system prompt is the cached prefix, and one changed byte there would re-send
+# the whole fact base at full price on every call.
+_ASK = {
+    "both": "Write the CV and the Anschreiben for this posting.",
+    "cv": "Write only the CV for this posting. No Anschreiben.",
+    "letter": "Write only the Anschreiben for this posting. No CV - the letter "
+              "stands on its own, so it carries the strongest evidence itself.",
+}
+
+
+def _parse(raw: str, mode: str) -> Application:
+    """Hold the reply to the schema it was asked for, then widen it."""
+    return Application.model_validate(response_model(mode).model_validate_json(raw).model_dump())
+
+
 def write(
-    job: Dict[str, Any], base: FactBase, personal: Dict[str, Any]
+    job: Dict[str, Any], base: FactBase, personal: Dict[str, Any], mode: str = "both"
 ) -> Optional[Application]:
-    """First draft."""
+    """First draft, of the CV, the letter, or both."""
     from scoring.llm_client import primary_client
 
-    prompt = (
-        _job_block(job)
-        + "\n\nWrite the CV and the Anschreiben for this posting."
-    )
+    prompt = _job_block(job) + "\n\n" + _ASK.get(mode, _ASK["both"])
     try:
         raw = primary_client.generate_content(
             prompt=prompt, system_prompt=_system(base, personal),
             cache_system=True,
-            response_format=Application,
+            response_format=response_model(mode),
             temperature=settings.temperature_for(settings.WRITER_MODEL, 0.3),
             model_override=settings.WRITER_MODEL,
         )
-        return Application.model_validate_json(raw)
+        return _parse(raw, mode)
     except Exception as exc:  # noqa: BLE001
         logging.error("Writing the application failed: %s", exc)
         return None
@@ -241,22 +254,26 @@ def revise(
             "not opinions\n\n" + verifier_problems
         )
 
+    # A revision keeps to the documents the draft already holds: a letter-only
+    # run must not grow a CV on its second round.
+    mode = mode_of(current)
     prompt = (
         _job_block(job)
         + "\n\n## YOUR CURRENT DRAFT\n\n"
-        + json.dumps(current.model_dump(mode="json"), ensure_ascii=False, indent=1)
+        + json.dumps(current.model_dump(mode="json", exclude_none=True),
+                     ensure_ascii=False, indent=1)
         + "\n\n" + notes
-        + "\n\nProduce the revised application."
+        + "\n\nProduce the revised application. " + _ASK.get(mode, _ASK["both"])
     )
     try:
         raw = primary_client.generate_content(
             prompt=prompt, system_prompt=_system(base, personal, REVISE_PROMPT),
             cache_system=True,
-            response_format=Application,
+            response_format=response_model(mode),
             temperature=settings.temperature_for(settings.WRITER_MODEL, 0.3),
             model_override=settings.WRITER_MODEL,
         )
-        return Application.model_validate_json(raw)
+        return _parse(raw, mode)
     except Exception as exc:  # noqa: BLE001
         logging.error("Revising the application failed: %s", exc)
         return None

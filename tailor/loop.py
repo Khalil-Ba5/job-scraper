@@ -137,8 +137,12 @@ def run(
     resume: Optional[Continuation] = None,
     probe: bool = False,
     ask: Optional[Callable[[List[Question]], Optional[Dict[str, str]]]] = None,
+    mode: str = "both",
 ) -> Result:
     """Write, check, argue, revise - then score once, outside the loop.
+
+    `mode` picks the documents for a fresh draft: 'both', 'cv' or 'letter'. A
+    continuation ignores it and keeps to whatever the draft already holds.
 
     With `resume`, the loop picks up an existing draft instead of writing a new
     one: `max_rounds` then counts *additional* rounds rather than total. That
@@ -182,7 +186,7 @@ def run(
         if app is None:
             say(f"Round {number}: writing the first draft")
             app, verification, repairs = _write_and_verify(
-                lambda: writer.write(job, base, personal),
+                lambda: writer.write(job, base, personal, mode=mode),
                 lambda draft, problems: writer.revise(
                     job, base, personal, draft, [], verifier_problems=problems),
                 base,

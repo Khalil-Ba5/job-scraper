@@ -34,6 +34,23 @@ def save(job: Dict[str, Any], result: Any,
     that produced the draft being refined, which is the part worth keeping.
     """
     os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
+    app = result.application
+    cv_text = render_cv(app.cv) if app and app.cv else ""
+    letter_text = render_cover_letter(app.cover_letter) if app and app.cover_letter else ""
+    score_before, score_after, score_note = (
+        result.score_before, result.score_after, result.score_note)
+    # Writing one document must not wipe the other. Ask for only the letter on a
+    # job whose CV you already have, and the saved CV stays - along with its
+    # head-to-head score, which is about that CV and still true of it.
+    previous = load(job.get("job_id")) or {}
+    if not cv_text and previous.get("cv_text"):
+        cv_text = previous["cv_text"]
+        if score_after is None:
+            score_before = previous.get("score_before")
+            score_after = previous.get("score_after")
+            score_note = previous.get("score_note") or score_note
+    if not letter_text and previous.get("cover_letter_text"):
+        letter_text = previous["cover_letter_text"]
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "job": {
@@ -54,16 +71,14 @@ def save(job: Dict[str, Any], result: Any,
         # work.
         "awaiting_answers": getattr(result, "awaiting_answers", False),
         "questions": [q.model_dump(mode="json") for q in getattr(result, "questions", [])],
-        "score_before": result.score_before,
-        "score_after": result.score_after,
-        "score_note": result.score_note,
-        "cv_text": render_cv(result.application.cv) if result.application else "",
-        "cover_letter_text": (
-            render_cover_letter(result.application.cover_letter) if result.application else ""
-        ),
-        "application": (
-            result.application.model_dump(mode="json") if result.application else None
-        ),
+        "score_before": score_before,
+        "score_after": score_after,
+        "score_note": score_note,
+        "cv_text": cv_text,
+        "cover_letter_text": letter_text,
+        # Only what this run wrote: "Add a review round" continues this draft,
+        # and must not start revising a document kept from an earlier run.
+        "application": app.model_dump(mode="json") if app else None,
         "rounds": list(prior_rounds or []) + [
             {
                 "number": r.number,

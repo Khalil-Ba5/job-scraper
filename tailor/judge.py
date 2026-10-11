@@ -230,11 +230,20 @@ def review(job: Dict[str, Any], app: Application, attempts: int = 2) -> Optional
         f"## YOUR POSTING\n\nTitle: {job.get('job_title')}\n"
         f"Company: {job.get('company')}\n\n{(job.get('description') or '')[:9000]}",
     ]
-    prompt = (
-        f"## THE APPLICATION\n\n### CV\n\n{render_cv(app.cv)}\n\n"
-        f"### Cover letter\n\n{render_cover_letter(app.cover_letter)}\n\n"
-        "What are your objections?"
-    )
+    parts = []
+    if app.cv is not None:
+        parts.append(f"### CV\n\n{render_cv(app.cv)}")
+    if app.cover_letter is not None:
+        parts.append(f"### Cover letter\n\n{render_cover_letter(app.cover_letter)}")
+    # Said outright, or the absent document becomes the first objection of every
+    # round - one no rewrite can answer, because the writer is not asked for it.
+    if app.cv is None:
+        parts.append("(Only the cover letter is being written here; the CV is sent "
+                     "separately. Do not object that it is missing.)")
+    elif app.cover_letter is None:
+        parts.append("(Only the CV is being written here. Do not object that there is "
+                     "no cover letter.)")
+    prompt = "## THE APPLICATION\n\n" + "\n\n".join(parts) + "\n\nWhat are your objections?"
 
     last_error: Optional[Exception] = None
     for attempt in range(1, attempts + 1):

@@ -6,7 +6,7 @@ quietly invent, and the citation is checkable mechanically rather than by asking
 another model to be vigilant.
 """
 
-from typing import List
+from typing import List, Optional, Type
 
 from pydantic import BaseModel, Field
 
@@ -61,8 +61,47 @@ class CoverLetter(BaseModel):
 
 
 class Application(BaseModel):
+    """What a run produced. Either document may be absent: you can ask for only
+    the CV or only the letter, and paying the writer, the verifier and the
+    judge for a document you will not send is the cost the choice exists to cut.
+    """
+
+    cv: Optional[TailoredCV] = None
+    cover_letter: Optional[CoverLetter] = None
+
+
+# What can be asked for, and how the page names it.
+MODES = ("both", "cv", "letter")
+MODE_LABELS = {"both": "CV and cover letter", "cv": "CV only", "letter": "Cover letter only"}
+
+
+# The schemas the writer is held to. Separate from Application, whose fields
+# are optional: handed an optional field, a model may leave out a document it
+# was asked for, and nothing would say so until the page showed a blank tab.
+class _Both(BaseModel):
     cv: TailoredCV
     cover_letter: CoverLetter
+
+
+class _CVOnly(BaseModel):
+    cv: TailoredCV
+
+
+class _LetterOnly(BaseModel):
+    cover_letter: CoverLetter
+
+
+def response_model(mode: str) -> Type[BaseModel]:
+    return {"cv": _CVOnly, "letter": _LetterOnly}.get(mode, _Both)
+
+
+def mode_of(app: Application) -> str:
+    """Which documents an existing draft holds, so a revision keeps to them."""
+    if app.cv is not None and app.cover_letter is None:
+        return "cv"
+    if app.cv is None and app.cover_letter is not None:
+        return "letter"
+    return "both"
 
 
 def render_cv(cv: TailoredCV) -> str:
@@ -98,10 +137,23 @@ def render_cover_letter(letter: CoverLetter) -> str:
     return "\n\n".join(p for p in parts if p is not None).strip()
 
 
+def render_application(app: Application) -> str:
+    """Whatever the draft holds, as one text, for the reader and the phrase check."""
+    parts = []
+    if app.cv is not None:
+        parts.append(render_cv(app.cv))
+    if app.cover_letter is not None:
+        parts.append(render_cover_letter(app.cover_letter))
+    return "\n".join(parts)
+
+
 def all_lines(app: Application) -> List[Line]:
     """Every claim-bearing line, for the verifier to walk."""
-    lines = [app.cv.summary]
-    for block in list(app.cv.experience) + list(app.cv.projects):
-        lines.extend(block.bullets)
-    lines.extend(app.cover_letter.paragraphs)
+    lines: List[Line] = []
+    if app.cv is not None:
+        lines.append(app.cv.summary)
+        for block in list(app.cv.experience) + list(app.cv.projects):
+            lines.extend(block.bullets)
+    if app.cover_letter is not None:
+        lines.extend(app.cover_letter.paragraphs)
     return lines

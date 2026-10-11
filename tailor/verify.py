@@ -139,9 +139,9 @@ def verify(app: Application, base: FactBase) -> VerifyResult:
                 )
 
     # Banned phrasing, across everything the reader sees.
-    from tailor.documents import render_cv, render_cover_letter
+    from tailor.documents import render_application
 
-    haystack = (render_cv(app.cv) + "\n" + render_cover_letter(app.cover_letter)).lower()
+    haystack = render_application(app).lower()
     for phrase in settings.BANNED_PHRASES:
         if phrase in haystack:
             result.problems.append(
