@@ -623,6 +623,11 @@ def update_application_stage(job_id: str, stage: str, rejection_reason: Optional
     if not job_id or stage not in VALID_APPLICATION_STAGES:
         logging.error(f"Invalid input for updating application stage: job_id={job_id}, stage={stage}")
         return False
+    if stage == "rejected" and not (rejection_reason or "").strip():
+        # A rejection without a reason teaches calibration nothing: by mid-October
+        # 43 of 44 had none. "no_reason_given" exists for employers who gave none.
+        logging.error(f"Refusing to mark job_id {job_id} rejected without a rejection_reason.")
+        return False
 
     update_payload = {
         "application_stage": stage,

@@ -217,3 +217,15 @@ class TestSummarize:
         assert s["interview_rate"] is None
         assert s["brier"] is None
         assert s["enough_data"] is False
+
+
+class TestRejectionsMissingReason:
+    def test_lists_only_rejections_without_a_reason_oldest_first(self):
+        jobs = [
+            {"job_id": "new", "application_stage": "rejected", "application_date": "2026-09-20"},
+            {"job_id": "old", "application_stage": "rejected", "application_date": "2026-09-04",
+             "rejection_reason": " "},
+            {"job_id": "has", "application_stage": "rejected", "rejection_reason": "visa"},
+            {"job_id": "open", "application_stage": "applied"},
+        ]
+        assert [j["job_id"] for j in calibration.rejections_missing_reason(jobs)] == ["old", "new"]

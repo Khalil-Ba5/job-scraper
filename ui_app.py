@@ -965,6 +965,18 @@ def render_ghost_prompt(jobs):
                             f"{job.get('company') or '—'} · applied {age} days ago")
 
 
+def render_missing_reasons_prompt(jobs):
+    """Name the rejections that still have no reason, so the backlog gets filled."""
+    missing = calibration.rejections_missing_reason(jobs)
+    if not missing:
+        return
+    n = len(missing)
+    st.warning(f"{n} rejection{'s have' if n != 1 else ' has'} no reason recorded, so the "
+               "\"Is the score right?\" page cannot learn from "
+               f"{'them' if n != 1 else 'it'}. Open each under Resolved → Update and pick one; "
+               "\"No reason given\" counts.")
+
+
 def render_update_form(job):
     """The stage, the reason, the note — a form, not a row of controls."""
     job_id = job.get("job_id")
@@ -988,7 +1000,13 @@ def render_update_form(job):
             "Notes", value=job.get("outcome_notes") or "", key=f"notes_{job_id}",
             placeholder="What they said, next steps",
         )
-        if st.button("Save", key=f"save_{job_id}", type="primary", width="stretch"):
+        # A rejection is only saved with its reason: without one it teaches the
+        # calibration page nothing. "No reason given" is a valid answer.
+        needs_reason = new_stage == "rejected" and not reason
+        if needs_reason:
+            st.caption("Pick a reason to save a rejection — \"No reason given\" counts.")
+        if st.button("Save", key=f"save_{job_id}", type="primary", width="stretch",
+                     disabled=needs_reason):
             ok = supabase_utils.update_application_stage(
                 job_id, new_stage, rejection_reason=reason or None, notes=notes or None)
             if ok:
@@ -1082,6 +1100,7 @@ def render_applications_page():
     ]))
 
     render_ghost_prompt(jobs)
+    render_missing_reasons_prompt(jobs)
 
     controls = st.columns([3, 2], vertical_alignment="center")
     with controls[0]:

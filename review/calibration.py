@@ -165,6 +165,18 @@ def bucket_stats(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return rows
 
 
+def rejections_missing_reason(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Rejected applications with no reason recorded, oldest first.
+
+    The blockers chart is only as good as these. Saving a rejection now
+    requires a reason, so this list is the backlog from before that rule.
+    """
+    out = [j for j in jobs
+           if (j.get("application_stage") or "") == "rejected"
+           and not (j.get("rejection_reason") or "").strip()]
+    return sorted(out, key=lambda j: j.get("application_date") or "")
+
+
 def rejection_reason_counts(jobs: List[Dict[str, Any]]) -> Dict[str, int]:
     """How often each rejection reason came up, most common first."""
     counts: Dict[str, int] = {}

@@ -10,6 +10,34 @@ class TestUpdateApplicationStage:
     def test_rejects_missing_job_id(self):
         assert supabase_utils.update_application_stage("", "applied") is False
 
+    def test_a_rejection_needs_a_reason(self, monkeypatch):
+        """43 of the first 44 rejections had none, so calibration had nothing to learn."""
+        table = MagicMock()
+        monkeypatch.setattr(supabase_utils.supabase, "table", table)
+        assert supabase_utils.update_application_stage("job1", "rejected") is False
+        assert supabase_utils.update_application_stage("job1", "rejected", rejection_reason="  ") is False
+        table.assert_not_called()
+
+    def test_no_reason_given_is_a_reason(self, monkeypatch):
+        captured = {}
+
+        class FakeQuery:
+            def eq(self, *a, **k):
+                return self
+
+            def execute(self):
+                return MagicMock(data=[{"job_id": "job1"}])
+
+        class FakeTable:
+            def update(self, payload):
+                captured["payload"] = payload
+                return FakeQuery()
+
+        monkeypatch.setattr(supabase_utils.supabase, "table", lambda name: FakeTable())
+        assert supabase_utils.update_application_stage(
+            "job1", "rejected", rejection_reason="no_reason_given") is True
+        assert captured["payload"]["rejection_reason"] == "no_reason_given"
+
     def test_valid_stage_writes_expected_payload(self, monkeypatch):
         captured = {}
 
