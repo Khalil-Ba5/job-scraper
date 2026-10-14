@@ -118,3 +118,45 @@ class TestNotifyMatches:
     def test_missing_credentials_are_reported_rather_than_raised(self, mailable):
         mailable.setattr(config, "SMTP_PASSWORD", None)
         assert notify.notify_matches([job("a", 84)]) == 0
+
+
+def english_job(job_id, score, language="en"):
+    entry = job(job_id, score)
+    entry["score_breakdown"]["jd_language"] = language
+    return entry
+
+
+class TestEnglishAdBar:
+    """Both interviews came from English ads scored 58, under the general bar of 70."""
+
+    @pytest.fixture
+    def bars(self, mailable):
+        mailable.setattr(config, "EMAIL_ALERT_MIN_SCORE_ENGLISH", 55)
+        return mailable
+
+    def test_an_english_ad_is_mailed_at_the_lower_bar(self, bars):
+        assert [j["job_id"] for j in notify.alert_worthy([english_job("en", 58)])] == ["en"]
+
+    def test_a_german_ad_still_needs_the_general_bar(self, bars):
+        assert notify.alert_worthy([english_job("de", 58, "de"), english_job("mx", 69, "mixed")]) == []
+
+    def test_an_ad_with_no_language_needs_the_general_bar(self, bars):
+        assert notify.alert_worthy([job("x", 60)]) == []
+
+    def test_the_english_bar_never_sits_above_the_general_one(self, bars):
+        bars.setattr(config, "EMAIL_ALERT_MIN_SCORE", 50)
+        assert notify.alert_worthy([english_job("en", 52)])
+
+    def test_an_explicit_min_score_overrides_both(self, bars):
+        assert notify.alert_worthy([english_job("en", 58)], min_score=60) == []
+
+    def test_a_pydantic_breakdown_is_read_too(self, bars):
+        from types import SimpleNamespace
+        entry = job("en", 58)
+        entry["score_breakdown"] = SimpleNamespace(model_dump=lambda: {"jd_language": "en"})
+        assert notify.alert_worthy([entry])
+
+    def test_the_mail_names_both_bars(self, bars):
+        _, text, body_html = notify.build_message([english_job("en", 58)])
+        assert "70+ (55+ for English-language ads)" in text
+        assert "70+ (55+ for English-language ads)" in body_html

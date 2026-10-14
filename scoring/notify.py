@@ -4,7 +4,8 @@ Email alerts for strong matches, sent at the end of a scoring run.
 The pipeline runs unattended four times a day. Without a nudge a job scored at
 09:00 is not looked at until the evening, and applying early is measurably most
 of the advantage a small pipeline has. So: one mail per run, listing only the
-jobs *that run* scored at or above EMAIL_ALERT_MIN_SCORE. No mail when there is
+jobs *that run* scored at or above EMAIL_ALERT_MIN_SCORE (or the lower
+EMAIL_ALERT_MIN_SCORE_ENGLISH, for an English-language ad). No mail when there is
 nothing to say — an alert that arrives every run is an alert nobody opens.
 
 De-duplication is structural rather than a flag in the database: a job is scored
@@ -28,12 +29,43 @@ import config
 from sources.role_type import is_program
 
 
+def is_english_ad(job: Dict[str, Any]) -> bool:
+    """Is the ad written in English, by the scorer's jd_language field?"""
+    breakdown = job.get("score_breakdown") or {}
+    if not isinstance(breakdown, dict):
+        breakdown = getattr(breakdown, "model_dump", lambda: {})()
+    return str(breakdown.get("jd_language") or "").strip().lower() == "en"
+
+
+def threshold_for(job: Dict[str, Any], min_score: Optional[int] = None) -> int:
+    """The score a job must reach to be mailed.
+
+    English-language ads get a lower bar. Both interviews so far came from
+    English ads scored 58, which the general bar of 70 never mailed, and no
+    German-language ad has led to one. An explicit min_score overrides both.
+    """
+    if min_score is not None:
+        return min_score
+    general = config.EMAIL_ALERT_MIN_SCORE
+    if is_english_ad(job):
+        return min(general, getattr(config, "EMAIL_ALERT_MIN_SCORE_ENGLISH", general))
+    return general
+
+
 def alert_worthy(jobs: List[Dict[str, Any]],
                  min_score: Optional[int] = None) -> List[Dict[str, Any]]:
     """The jobs from a run that are worth interrupting someone for, best first."""
-    threshold = config.EMAIL_ALERT_MIN_SCORE if min_score is None else min_score
-    matches = [j for j in jobs if (j.get("resume_score") or 0) >= threshold]
+    matches = [j for j in jobs if (j.get("resume_score") or 0) >= threshold_for(j, min_score)]
     return sorted(matches, key=lambda j: j.get("resume_score") or 0, reverse=True)
+
+
+def _threshold_line(min_score: Optional[int] = None) -> str:
+    """How the bar reads in the mail, naming the English one when it differs."""
+    if min_score is not None:
+        return f"{min_score}+"
+    general = config.EMAIL_ALERT_MIN_SCORE
+    english = min(general, getattr(config, "EMAIL_ALERT_MIN_SCORE_ENGLISH", general))
+    return f"{general}+" if english == general else f"{general}+ ({english}+ for English-language ads)"
 
 
 def missing_settings() -> List[str]:
@@ -73,12 +105,12 @@ def build_message(matches: List[Dict[str, Any]],
     in "open the queue" — deciding needs the full breakdown, which lives in the
     UI, and a copy of it here would only go stale.
     """
-    threshold = config.EMAIL_ALERT_MIN_SCORE if min_score is None else min_score
+    threshold = _threshold_line(min_score)
     cap = max(1, getattr(config, "EMAIL_ALERT_MAX_JOBS", 10))
     shown = matches[:cap]
     hidden = len(matches) - len(shown)
 
-    text = [f"{len(matches)} new job(s) scored {threshold}+ in the latest run.", ""]
+    text = [f"{len(matches)} new job(s) scored {threshold} in the latest run.", ""]
     items = []
     for job in shown:
         breakdown = job.get("score_breakdown") or {}
@@ -123,7 +155,7 @@ def build_message(matches: List[Dict[str, Any]],
     body_html = (
         '<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;'
         'font-size:14px;line-height:1.5;color:#222">'
-        f'<p>{len(matches)} new job(s) scored <strong>{threshold}+</strong> in the latest run.</p>'
+        f'<p>{len(matches)} new job(s) scored <strong>{html.escape(threshold)}</strong> in the latest run.</p>'
         f'<ul style="padding-left:18px">{"".join(items)}</ul>'
         '<p style="color:#555">Run <code>streamlit run ui_app.py</code> to work the queue.</p>'
         '</div>'
@@ -209,8 +241,7 @@ def notify_matches(jobs: List[Dict[str, Any]], min_score: Optional[int] = None) 
         return 0
     matches = alert_worthy(jobs, min_score)
     if not matches:
-        threshold = config.EMAIL_ALERT_MIN_SCORE if min_score is None else min_score
-        logging.info("No job in this run scored %s+; no email alert sent.", threshold)
+        logging.info("No job in this run scored %s; no email alert sent.", _threshold_line(min_score))
         return 0
     try:
         subject, text, body_html = build_message(matches, min_score)

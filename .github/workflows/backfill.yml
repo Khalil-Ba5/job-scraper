@@ -113,6 +113,7 @@ jobs:
           # an unset variable is an empty string, and an empty string is falsy.
           EMAIL_ALERTS_ENABLED: ${{ vars.EMAIL_ALERTS_ENABLED }}
           EMAIL_ALERT_MIN_SCORE: ${{ vars.EMAIL_ALERT_MIN_SCORE }}
+          EMAIL_ALERT_MIN_SCORE_ENGLISH: ${{ vars.EMAIL_ALERT_MIN_SCORE_ENGLISH }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}

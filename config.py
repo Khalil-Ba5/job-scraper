@@ -190,6 +190,9 @@ CV_DEFAULT = None  # e.g. "cv_general.pdf"
 # Outlook, Resend, SendGrid, Postmark.
 EMAIL_ALERTS_ENABLED = _bool_env("EMAIL_ALERTS_ENABLED", False)
 EMAIL_ALERT_MIN_SCORE = _int_env("EMAIL_ALERT_MIN_SCORE", 70)
+# Lower bar for English-language ads: both interviews so far came from English ads
+# scored 58, which the general bar never mailed. Never higher than the general bar.
+EMAIL_ALERT_MIN_SCORE_ENGLISH = _int_env("EMAIL_ALERT_MIN_SCORE_ENGLISH", 55)
 # How many jobs the mail lists in full before falling back to a count. The mail is
 # a nudge to open the queue, not the queue itself.
 EMAIL_ALERT_MAX_JOBS = _int_env("EMAIL_ALERT_MAX_JOBS", 10)
