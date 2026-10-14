@@ -148,54 +148,62 @@ def get_jobs_to_score(limit: int) -> list:
     """
     Fetches jobs from the Supabase 'jobs' table that need scoring.
     Filters by is_active = true and resume_score = null.
-    Selects only necessary fields (job_id, job_title, description).
-    Orders by scraped_at descending: newest first.
 
-    Newest first because intake now outruns the per-run screen cap. Oldest-first
-    let the backlog grow (35 -> 250 unscored, Sep 27 -> Oct 1), so a job scraped
-    today waited days for a score and never appeared on the dashboard, which
-    only shows today's finds. Raising the cap would cost more per day; this costs
-    nothing. When intake beats the cap, the jobs left unscreened are the stalest
+    Sources in config.SCORE_LAST_PROVIDERS come last; within each group, newest
+    first. The Arbeitsagentur feed is half of everything scraped and almost all
+    German-language (73 of 82 scored), and no German-language application has
+    yet led to an interview, while LinkedIn carries 213 of the 218 English ads.
+    With 607 Arbeitsagentur rows in the unscored backlog, a newest-first queue
+    across both sources left 108 LinkedIn jobs waiting behind them.
+
+    Newest first within a source because intake outruns the per-run screen cap:
+    oldest-first let the backlog grow, so a job scraped today waited days for a
+    score. When intake beats the cap, the jobs left unscreened are the stalest
     ones, and the 14-day cleanup removes them without a model ever seeing them.
     """
     if limit <= 0:
         logging.warning("Limit for jobs to score must be positive.")
         return []
 
+    last = list(getattr(config, "SCORE_LAST_PROVIDERS", []))
+
     try:
         logging.info(f"Fetching up to {limit} jobs needing scoring...")
 
-        # Select fields needed for scoring
-        def _query(columns: str):
-            return supabase.table(config.SUPABASE_TABLE_NAME)\
-                           .select(columns)\
-                           .eq("is_active", True)\
-                           .is_("resume_score", None)\
-                           .order("scraped_at", desc=True)\
-                           .limit(limit)\
-                           .execute()
+        def _query(columns: str, n: int, deprioritised: bool):
+            query = supabase.table(config.SUPABASE_TABLE_NAME)                            .select(columns)                            .eq("is_active", True)                            .is_("resume_score", None)
+            if last:
+                listed = ",".join(last)
+                query = (query.in_("provider", last) if deprioritised
+                         else query.or_(f"provider.is.null,provider.not.in.({listed})"))
+            return query.order("scraped_at", desc=True).limit(n).execute()
 
         # scraped_at is not used for scoring. It is here because the dashboard
         # filters these rows to "found today", and without the column that test
         # failed for every row — so the Unscored table was structurally always
         # empty and the stat above it always read 0.
         base_cols = "job_id, job_title, company, description, level, scraped_at"
-        try:
-            response = _query(base_cols + ", program_type")
-        except Exception as inner_e:
-            if "program_type" not in str(inner_e):
-                raise
-            # Column not added yet (supabase_setup/add_program_type.sql). Programmes
-            # are then scored as standard roles rather than not at all.
-            logging.warning("program_type column missing in Supabase — scoring without it.")
-            response = _query(base_cols)
 
-        if response.data:
-            logging.info(f"Successfully fetched {len(response.data)} jobs to score.")
-            return response.data
+        def _fetch(n: int, deprioritised: bool) -> list:
+            try:
+                return _query(base_cols + ", program_type", n, deprioritised).data or []
+            except Exception as inner_e:
+                if "program_type" not in str(inner_e):
+                    raise
+                # Column not added yet (supabase_setup/add_program_type.sql). Programmes
+                # are then scored as standard roles rather than not at all.
+                logging.warning("program_type column missing in Supabase — scoring without it.")
+                return _query(base_cols, n, deprioritised).data or []
+
+        rows = _fetch(limit, deprioritised=False)
+        if last and len(rows) < limit:
+            rows += _fetch(limit - len(rows), deprioritised=True)
+
+        if rows:
+            logging.info(f"Successfully fetched {len(rows)} jobs to score.")
         else:
             logging.info("No jobs found needing scoring at this time.")
-            return []
+        return rows
 
     except Exception as e:
         logging.error(f"Error fetching jobs to score from Supabase: {e}")

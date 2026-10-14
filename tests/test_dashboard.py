@@ -46,6 +46,12 @@ class TestUnscoredJobsCarryTheirScrapeDate:
             def is_(self, *a, **k):
                 return self
 
+            def in_(self, *a, **k):
+                return self
+
+            def or_(self, *a, **k):
+                return self
+
             def order(self, *a, **k):
                 return self
 
@@ -81,6 +87,12 @@ class TestUnscoredJobsComeNewestFirst:
             def is_(self, *a, **k):
                 return self
 
+            def in_(self, *a, **k):
+                return self
+
+            def or_(self, *a, **k):
+                return self
+
             def order(self, column, desc=False):
                 orders.append((column, desc))
                 return self
@@ -94,7 +106,68 @@ class TestUnscoredJobsComeNewestFirst:
         monkeypatch.setattr(supabase_utils, "supabase",
                             type("C", (), {"table": lambda self, name: FakeQuery()})())
         supabase_utils.get_jobs_to_score(10)
-        assert orders == [("scraped_at", True)]
+        assert orders and all(o == ("scraped_at", True) for o in orders)
+
+
+class TestDeprioritisedSourcesComeLast:
+    """No German-language ad has led to an interview; LinkedIn carries the English ones."""
+
+    def _client(self, rows_by_pass, calls):
+        class FakeQuery:
+            def __init__(self):
+                self.pass_ = None
+
+            def select(self, columns):
+                return self
+
+            def eq(self, *a, **k):
+                return self
+
+            def is_(self, *a, **k):
+                return self
+
+            def or_(self, expr):
+                self.pass_ = "first"
+                calls.append(("first", expr))
+                return self
+
+            def in_(self, column, values):
+                self.pass_ = "last"
+                calls.append(("last", tuple(values)))
+                return self
+
+            def order(self, *a, **k):
+                return self
+
+            def limit(self, n):
+                self.n = n
+                return self
+
+            def execute(self):
+                return type("R", (), {"data": rows_by_pass[self.pass_][:self.n]})()
+
+        return type("C", (), {"table": lambda self, name: FakeQuery()})()
+
+    def test_other_sources_fill_the_batch_before_arbeitsagentur(self, monkeypatch):
+        import config
+        monkeypatch.setattr(config, "SCORE_LAST_PROVIDERS", ["arbeitsagentur"])
+        calls = []
+        rows = {"first": [{"job_id": "li1"}, {"job_id": "li2"}],
+                "last": [{"job_id": "aa1"}, {"job_id": "aa2"}, {"job_id": "aa3"}]}
+        monkeypatch.setattr(supabase_utils, "supabase", self._client(rows, calls))
+        got = [r["job_id"] for r in supabase_utils.get_jobs_to_score(4)]
+        assert got == ["li1", "li2", "aa1", "aa2"]
+        assert calls == [("first", "provider.is.null,provider.not.in.(arbeitsagentur)"),
+                         ("last", ("arbeitsagentur",))]
+
+    def test_a_full_first_pass_skips_the_second_query(self, monkeypatch):
+        import config
+        monkeypatch.setattr(config, "SCORE_LAST_PROVIDERS", ["arbeitsagentur"])
+        calls = []
+        rows = {"first": [{"job_id": f"li{i}"} for i in range(5)], "last": [{"job_id": "aa1"}]}
+        monkeypatch.setattr(supabase_utils, "supabase", self._client(rows, calls))
+        assert len(supabase_utils.get_jobs_to_score(3)) == 3
+        assert [c[0] for c in calls] == ["first"]
 
 
 class TestBuildDashboard:

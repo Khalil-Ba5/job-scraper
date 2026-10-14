@@ -215,6 +215,9 @@ SCRAPING_SOURCES = ["linkedin", "arbeitsagentur"]
 # Indeed was removed in Step A.0: every search came back 403/401 from GitHub-hosted
 # runners for at least twelve weeks, yielding zero jobs while the run stayed green.
 JOBS_TO_SCORE_PER_RUN = _int_env("JOBS_TO_SCORE_PER_RUN", 15)
+# Screened and scored only after every other source's unscored jobs. Nearly all
+# German-language, and German-language ads have produced no interview so far.
+SCORE_LAST_PROVIDERS = ["arbeitsagentur"]
 JOBS_TO_CUSTOMIZE_PER_RUN = 3
 RESUME_CUSTOMIZATION_MIN_SCORE = 55  # Only tailor resumes for strong matches; below this, effort is better spent elsewhere
 # Score each tailored CV as well. Off: the model scoring a CV it rewrote for that
