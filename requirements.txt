@@ -1,15 +1,19 @@
-requests
-beautifulsoup4
-python-dotenv
-supabase
-httpx
-pdfplumber
-google-genai
-litellm
-pydantic
-streamlit
-pandas
-playwright
-markdownify
-reportlab
-pytest
+# Pinned to the versions the scheduled pipeline last installed and ran green
+# (GitHub Actions, Python 3.11). Unpinned, every run pulled whatever was newest
+# into a job holding the Supabase service-role key and the LLM API keys. Bump
+# these deliberately, one at a time, and let a manual run prove the change.
+requests==2.34.2
+beautifulsoup4==4.15.0
+python-dotenv==1.2.4
+supabase==2.32.0
+httpx==0.28.1
+pdfplumber==0.11.10
+google-genai==2.30.1
+litellm==1.105.1
+pydantic==2.14.1
+streamlit==1.65.0
+pandas==3.0.6
+playwright==1.64.0
+markdownify==1.2.3
+reportlab==5.0.1
+pytest==9.1.1
