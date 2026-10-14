@@ -585,8 +585,9 @@ def run_linkedin() -> scrape_guard.SourceOutcome:
 
         if new_linkedin_job_details:
             logging.info(f"Saving {len(new_linkedin_job_details)} new job(s) for query '{query}'")
-            supabase_utils.save_jobs_to_supabase(new_linkedin_job_details)
-            outcome.record_query(new=len(new_linkedin_job_details))
+            saved = supabase_utils.save_jobs_to_supabase(new_linkedin_job_details)
+            outcome.record_query(new=saved)
+            outcome.record_filtered(scrape_guard.SAVE_FAILED, len(new_linkedin_job_details) - saved)
         else:
             logging.info(f"No new job details were fetched or processed for query '{query}'.")
     return outcome
@@ -606,8 +607,9 @@ def run_arbeitsagentur() -> scrape_guard.SourceOutcome:
                                                 outcome=outcome)
         if new_jobs:
             logging.info(f"Saving {len(new_jobs)} new job(s) for query '{query}'")
-            supabase_utils.save_jobs_to_supabase(new_jobs)
-            outcome.record_query(new=len(new_jobs))
+            saved = supabase_utils.save_jobs_to_supabase(new_jobs)
+            outcome.record_query(new=saved)
+            outcome.record_filtered(scrape_guard.SAVE_FAILED, len(new_jobs) - saved)
         else:
             logging.info(f"No new job details were fetched or processed for query '{query}'.")
     return outcome

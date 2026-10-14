@@ -102,3 +102,14 @@ class TestElapsedTiming:
     def test_each_source_is_timed(self, ran):
         outcomes = scraper.run_sources(["linkedin"])
         assert outcomes[0].elapsed_seconds >= 0
+
+    def test_postings_the_database_refused_exit_non_zero(self, monkeypatch):
+        """Fetched, then lost on the write: a failure even though the source worked."""
+        def refused():
+            outcome = scrape_guard.SourceOutcome("linkedin")
+            outcome.record_query(fetched=10, new=0)
+            outcome.record_filtered(scrape_guard.SAVE_FAILED, 10)
+            return outcome
+
+        monkeypatch.setattr(scraper, "SOURCE_RUNNERS", {"linkedin": refused})
+        assert scraper.main(["--source", "linkedin"]) == 1

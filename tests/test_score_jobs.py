@@ -397,3 +397,30 @@ class TestScreenFallbackIsBounded:
         monkeypatch.setattr(score_jobs, "screen_job_with_ai", failing)
         score_jobs.run_screening_phase()
         assert len(calls) == 3, "must stop screening, not burn the whole corpus on a dead key"
+
+
+class TestExitCode:
+    """A run that scores nothing because of a bad key must show red, not green."""
+
+    @pytest.fixture
+    def pipeline(self, monkeypatch):
+        monkeypatch.setattr(config, "SCREENING_ENABLED", False)
+        monkeypatch.setattr(score_jobs.supabase_utils, "get_base_resume", lambda: {"name": "N"})
+        monkeypatch.setattr(score_jobs.supabase_utils, "get_jobs_to_score",
+                            lambda limit: [{"job_id": "j1", "description": "t"}])
+        monkeypatch.setattr(score_jobs.notify, "notify_matches", lambda entries: None)
+        monkeypatch.setattr(score_jobs.time, "sleep", lambda s: None)
+        return monkeypatch
+
+    def test_every_score_failing_exits_non_zero(self, pipeline):
+        pipeline.setattr(score_jobs, "get_resume_score_from_ai", lambda resume, job: None)
+        assert score_jobs.main(["--only-initial"]) == 1
+
+    def test_nothing_to_score_exits_zero(self, pipeline):
+        pipeline.setattr(score_jobs.supabase_utils, "get_jobs_to_score", lambda limit: [])
+        assert score_jobs.main(["--only-initial"]) == 0
+
+    def test_no_base_resume_exits_non_zero(self, pipeline, monkeypatch):
+        pipeline.setattr(score_jobs.supabase_utils, "get_base_resume", lambda: None)
+        monkeypatch.setattr(config, "BASE_RESUME_PATH", "does-not-exist.json")
+        assert score_jobs.main(["--only-initial"]) == 1

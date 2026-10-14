@@ -140,3 +140,27 @@ class TestDeletedStayDeleted:
         ids, keys = supabase_utils.get_deleted_job_keys()
         assert ids == {"j9", "j8"}
         assert keys == {("acme", "engineer")}
+
+    def test_tombstones_past_the_first_page_are_read(self, monkeypatch):
+        """PostgREST caps an unbounded select at 1000 rows; the table outgrew it."""
+        tombstones = [{"job_id": f"j{i}", "dedup_key": f"acme|role {i}"} for i in range(2034)]
+
+        class PagedTable:
+            def select(self, *_a, **_k):
+                return self
+
+            def range(self, start, end):
+                self.page = tombstones[start:end + 1]
+                return self
+
+            def execute(self):
+                return _Result(self.page)
+
+        class PagedClient:
+            def table(self, _name):
+                return PagedTable()
+
+        monkeypatch.setattr(supabase_utils, "supabase", PagedClient())
+        ids, keys = supabase_utils.get_deleted_job_keys()
+        assert len(ids) == 2034
+        assert ("acme", "role 2033") in keys

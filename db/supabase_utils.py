@@ -73,14 +73,18 @@ def get_existing_jobs_from_supabase(batch_size: int = 1000) -> tuple[set, set]:
         logging.info(f"Plus {len(deleted_ids)} deleted posting(s) to keep out.")
     return existing_ids | deleted_ids, existing_company_title_keys | deleted_keys
 
-def save_jobs_to_supabase(jobs_data: list):
+def save_jobs_to_supabase(jobs_data: list) -> int:
     """
     Saves or updates a list of job data dictionaries to the Supabase table using upsert.
     This avoids duplicate key errors by updating existing records based on job_id.
+
+    Returns how many rows were written: 0 when the upsert failed. The scrapers
+    count this, not the list they passed in, so a database error shows up in the
+    run's accounting instead of being reported as jobs saved.
     """
     if not jobs_data:
         logging.warning("No job data provided to save/update.")
-        return
+        return 0
 
     # Columns that exist in the Supabase 'jobs' table schema
     known_columns = {
@@ -104,7 +108,7 @@ def save_jobs_to_supabase(jobs_data: list):
 
     if not processed_jobs_data:
         logging.warning("No valid job data remaining after processing.")
-        return
+        return 0
 
     logging.info(f"Attempting to upsert {len(processed_jobs_data)} jobs to Supabase...")
 
@@ -133,9 +137,11 @@ def save_jobs_to_supabase(jobs_data: list):
              logging.info(f"Successfully upserted/updated {len(processed_jobs_data)} jobs. Supabase response count: {count}")
         else:
              logging.info(f"Attempted to upsert {len(processed_jobs_data)} jobs. Supabase response: {data}")
+        return len(processed_jobs_data)
 
     except Exception as e:
         logging.error(f"Error upserting data to Supabase: {e}")
+        return 0
 
 
 def get_jobs_to_score(limit: int) -> list:
@@ -784,7 +790,7 @@ VALID_DELETE_REASONS = {
 }
 
 
-def get_deleted_job_keys() -> tuple[set, set]:
+def get_deleted_job_keys(batch_size: int = 1000) -> tuple[set, set]:
     """Ids and dedup keys of postings deleted by hand.
 
     Returns empty sets when the table is absent, so a scrape on a database that
@@ -795,8 +801,18 @@ def get_deleted_job_keys() -> tuple[set, set]:
     ids: set = set()
     keys: set = set()
     try:
-        response = supabase.table("deleted_jobs").select("job_id, dedup_key").execute()
-        for row in response.data or []:
+        # Paged: PostgREST caps an unbounded select at 1000 rows. The table passed
+        # that in October and every scrape silently read only the first 1000
+        # tombstones, letting the rest back in to be re-screened.
+        rows, offset = [], 0
+        while True:
+            page = (supabase.table("deleted_jobs").select("job_id, dedup_key")
+                    .range(offset, offset + batch_size - 1).execute().data or [])
+            rows.extend(page)
+            if len(page) < batch_size:
+                break
+            offset += batch_size
+        for row in rows:
             if row.get("job_id"):
                 ids.add(str(row["job_id"]))
             raw = row.get("dedup_key") or ""

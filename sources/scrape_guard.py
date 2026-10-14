@@ -32,6 +32,12 @@ BROKEN = "broken"
 NO_NEW = "no_new"
 OK = "ok"
 
+# A filter reason, but not a content decision: the database refused the write.
+# Counted with the filters so the buckets still sum to `fetched`, and fatal in
+# report(), because postings that were fetched and then lost are a failure even
+# on a day the source itself worked.
+SAVE_FAILED = "save_failed"
+
 # A broken source can have one failed attempt per query per page. Print enough to
 # see the pattern, not so many that the real summary scrolls away.
 MAX_DIAGNOSTIC_LINES = 10
@@ -222,5 +228,11 @@ def report(outcomes: List[SourceOutcome]) -> int:
     if broken:
         logging.error(f"Scrape finished with {len(broken)} broken source(s): "
                       f"{', '.join(broken)}. Exiting non-zero.")
+        return 1
+    unsaved = {o.source: o.filtered_out[SAVE_FAILED] for o in outcomes
+               if o.filtered_out.get(SAVE_FAILED)}
+    if unsaved:
+        detail = ", ".join(f"{source} {count}" for source, count in unsaved.items())
+        logging.error(f"Fetched postings could not be saved ({detail}). Exiting non-zero.")
         return 1
     return 0

@@ -1137,8 +1137,14 @@ def rescore_jobs_with_custom_resume():
 
 # --- Main Execution ---
 
-def main(argv: list | None = None):
-    """Main function to score jobs based on the target resume."""
+def main(argv: list | None = None) -> int:
+    """Main function to score jobs based on the target resume.
+
+    Returns the process exit code: non-zero when a phase had work and every
+    attempt at it failed. That is an auth or config problem, and a run that
+    stays green through it scores nothing for days without anyone noticing -
+    the lesson the scrapers learned from Indeed, applied here too.
+    """
     parser = argparse.ArgumentParser(description="Screen and score jobs.")
     parser.add_argument(
         "--only-initial", action="store_true",
@@ -1150,6 +1156,7 @@ def main(argv: list | None = None):
     args = parser.parse_args(argv)
     logging.info("--- Starting Job Scoring Script ---")
     overall_start_time = time.time()
+    exit_code = 0
 
     # --- Phase 1: Initial Scoring with Default Resume ---
     logging.info("--- Phase 1: Initial Scoring with Default Resume ---")
@@ -1172,6 +1179,10 @@ def main(argv: list | None = None):
             default_resume_data = None
     else:
         logging.error(f"Base resume not found in Supabase or at '{resume_path}'. Please run the 'Parse Resume' workflow first.")
+
+    if not default_resume_data:
+        # Nothing can be scored without it, so this is a failed run, not a quiet one.
+        exit_code = 1
 
     default_resume_text = None
     if default_resume_data:
@@ -1266,6 +1277,7 @@ def main(argv: list | None = None):
                     f"(model='{config.LLM_MODEL}'). Check that the API key secret matches the model's provider "
                     "(e.g. ANTHROPIC_API_KEY for anthropic/* models)."
                 )
+                exit_code = 1
 
             initial_score_end_time = time.time()
             logging.info("--- Initial Scoring Phase Finished ---")
@@ -1279,7 +1291,7 @@ def main(argv: list | None = None):
         overall_end_time = time.time()
         logging.info("--- Job Scoring Script Finished (initial scoring only) ---")
         logging.info(f"Total script execution time: {overall_end_time - overall_start_time:.2f} seconds")
-        return
+        return exit_code
 
     rescore_jobs_with_custom_resume() 
 
@@ -1294,12 +1306,16 @@ def main(argv: list | None = None):
     overall_end_time = time.time()
     logging.info("--- Job Scoring Script Finished (All Phases) ---")
     logging.info(f"Total script execution time: {overall_end_time - overall_start_time:.2f} seconds")
+    return exit_code
 
 
 if __name__ == "__main__":
+    import sys
+
     if not config.LLM_API_KEY:
         logging.error("LLM_API_KEY environment variable not set. (Also accepts GEMINI_API_KEY / GEMINI_FIRST_API_KEY)")
+        sys.exit(1)
     elif not config.SUPABASE_URL or not config.SUPABASE_SERVICE_ROLE_KEY:
         logging.error("Supabase URL or Key environment variable not set.")
-    else:
-        main()
+        sys.exit(1)
+    sys.exit(main())
