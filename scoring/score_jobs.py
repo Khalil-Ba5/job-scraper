@@ -16,7 +16,7 @@ import config
 from scoring import notify
 from db import supabase_utils
 from scoring.llm_client import primary_client, screen_client
-from models import ScoreBreakdown, ScreenResult, PitchOutput
+from models import ScoreBreakdown, ScreenResult
 from sources.role_type import GRADUATE_PROGRAM, is_program
 
 # --- Setup Logging ---
@@ -470,59 +470,6 @@ def run_screening_phase() -> list:
                  f"{len(jobs) - len(passers) - screened_out} errored (will retry next run) ---")
     log_german_distribution(screen_labels)
     return passers[:config.JOBS_TO_SCORE_PER_RUN]
-
-
-def should_pitch(breakdown: ScoreBreakdown) -> bool:
-    """Does this job get a "why me" pitch? At the alert bar, with a positive recommendation."""
-    bar = notify.threshold_for({"score_breakdown": {"jd_language": breakdown.jd_language}})
-    return (breakdown.overall_score >= bar
-            and breakdown.recommendation in ("apply_now", "apply_after_fixes"))
-
-
-def generate_why_me_pitch(resume_text: str, job_details: Dict[str, Any], breakdown: ScoreBreakdown) -> Optional[str]:
-    """
-    For strong matches: 3-4 first-person sentences mapping the candidate's strongest
-    evidence to the job's top requirements. Used as an Easy-Apply message / email intro
-    and as the skeleton of a cover letter (Anschreiben).
-    """
-    prompt = f"""Write a first-person "why me" pitch (3-4 sentences, no greeting, no sign-off) for this application.
-
-## TODAY
-{availability_note()}
-
-This pitch is sent to an employer, so a wrong date here is not an internal error —
-it is a claim about when she can start, in her own voice. State availability as a
-calendar date if at all, never as a number of months.
-
-Rules:
-- Map the candidate's STRONGEST concrete evidence (Daimler Buses working student role, specific projects, specific skills) to the job's top 2-3 requirements.
-- Only use facts present in the resume below. No fabrication, no generic filler ("I am a motivated team player").
-- Confident but factual tone. Write in the language of the job description ({breakdown.jd_language}).
-- These skills were identified as the candidate's best matches for this job: {', '.join(breakdown.key_matching_skills[:5]) or 'see resume'}.
-
---- RESUME ---
-{resume_text}
---- END RESUME ---
-
---- JOB ---
-Title: {job_details.get('job_title', 'N/A')}
-Company: {job_details.get('company', 'N/A')}
-
-{(job_details.get('description') or '')[:4000]}
---- END JOB ---
-"""
-    try:
-        result_text = primary_client.generate_content(
-            prompt=prompt,
-            response_format=PitchOutput,
-            temperature=0.4,
-        )
-        pitch = PitchOutput.model_validate_json(result_text).pitch.strip()
-        logging.info(f"  Pitch for {job_details.get('job_id')}: {pitch[:120]}...")
-        return pitch or None
-    except Exception as e:
-        logging.error(f"Pitch generation failed for job_id {job_details.get('job_id')}: {e}")
-        return None
 
 
 def get_resume_score_from_ai(resume_text: str, job_details: Dict[str, Any]) -> Optional[ScoreBreakdown]:
@@ -1256,13 +1203,6 @@ def main(argv: list | None = None) -> int:
                             "resume_score": breakdown.overall_score,
                             "score_breakdown": breakdown,
                         })
-                        # Strong matches get a "why me" pitch for the application message / Anschreiben.
-                        # Same bar as the email alert, so a job mailed to apply early (an
-                        # English ad from 55) arrives with its pitch already written.
-                        if should_pitch(breakdown):
-                            pitch = generate_why_me_pitch(default_resume_text, job, breakdown)
-                            if pitch:
-                                supabase_utils.update_job_pitch(job_id, pitch)
                     else:
                         failed_initial_scores += 1
                 else:

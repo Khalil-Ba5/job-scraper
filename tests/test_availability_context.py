@@ -41,20 +41,6 @@ def _fallback_note():
 class TestEveryPromptSite:
     """Each of these builds a prompt that can state or imply a date."""
 
-    def test_the_pitch_carries_it(self, monkeypatch):
-        """The pitch goes to an employer. This is where 17 months was reaching drafts."""
-        from scoring import score_jobs
-
-        captured = {}
-        monkeypatch.setattr(score_jobs.primary_client, "generate_content",
-                            lambda prompt, **k: captured.setdefault("p", prompt) or '{"pitch": "x"}')
-        breakdown = _breakdown()
-        score_jobs.generate_why_me_pitch(
-            "resume", {"job_title": "ML Engineer", "company": "ACME", "description": "x"},
-            breakdown)
-        assert "Today's date is" in captured["p"]
-        assert "never as a number of months" in captured["p"]
-
     def test_the_scorer_carries_it(self, monkeypatch):
         from scoring import score_jobs
 
@@ -86,23 +72,3 @@ class TestEveryPromptSite:
         assert helper is not None, f"{module} builds prompts with no date helper"
         assert "scoring.availability" in inspect.getsource(helper), \
             f"{module} does not use the shared availability note"
-
-
-def _breakdown():
-    from models import ScoreBreakdown
-
-    return ScoreBreakdown.model_validate({
-        "overall_score": 80, "skills_match_score": 80, "experience_score": 80,
-        "education_score": 80, "language_fit": "Full match", "jd_language": "en",
-        "recommendation": "apply_now", "reasoning": "ok", "one_line_verdict": "ok",
-        "key_matching_skills": ["python"],
-        "dimension_scores": {"must_have_coverage": 80, "evidence_strength": 80,
-                             "nice_to_have_coverage": 80, "seniority_fit": 80,
-                             "environment_fit": 80, "domain_fit": 80,
-                             "differentiation": 80},
-        "competitive_context": {"estimated_applicant_volume": "100",
-                                "modal_competitor": "grad",
-                                "candidate_percentile": 60,
-                                "p_first_round_interview": {"as_is": 0.2,
-                                                            "after_fixes": 0.3}},
-    })

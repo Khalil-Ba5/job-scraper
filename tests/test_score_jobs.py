@@ -479,29 +479,3 @@ class TestExitCode:
         pipeline.setattr(score_jobs.supabase_utils, "get_base_resume", lambda: None)
         monkeypatch.setattr(config, "BASE_RESUME_PATH", "does-not-exist.json")
         assert score_jobs.main(["--only-initial"]) == 1
-
-
-
-class TestPitchBar:
-    """The pitch is written at the alert bar, so an early English match has one."""
-
-    @pytest.fixture(autouse=True)
-    def bars(self, monkeypatch):
-        monkeypatch.setattr(config, "EMAIL_ALERT_MIN_SCORE", 70)
-        monkeypatch.setattr(config, "EMAIL_ALERT_MIN_SCORE_ENGLISH", 55)
-
-    def _breakdown(self, score, language, recommendation="apply_after_fixes"):
-        breakdown = make_breakdown(0.2, recommendation=recommendation)
-        breakdown.overall_score = score
-        breakdown.jd_language = language
-        return breakdown
-
-    def test_an_english_ad_is_pitched_from_the_english_bar(self):
-        assert score_jobs.should_pitch(self._breakdown(58, "en"))
-
-    def test_a_german_ad_still_needs_the_general_bar(self):
-        assert not score_jobs.should_pitch(self._breakdown(58, "de"))
-        assert score_jobs.should_pitch(self._breakdown(70, "de"))
-
-    def test_a_negative_recommendation_gets_no_pitch(self):
-        assert not score_jobs.should_pitch(self._breakdown(80, "en", recommendation="skip"))

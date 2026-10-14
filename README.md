@@ -10,7 +10,7 @@ Four times a day, unattended, it:
 ```
 scrape  →  dedup  →  screen (cheap LLM)  →  score (full LLM)  →  rank  →  alert
 LinkedIn DE                 hard gates          0-100 + breakdown      email
-Arbeitsagentur              + rough band        + "why me" pitch       if 70+
+Arbeitsagentur              + rough band                               if 70+
 ```
 
 Everything lands in Supabase. You then open the Streamlit app and work the
@@ -55,8 +55,6 @@ queue: read the verdict, open the posting, mark applied or skip with a reason.
 - **A breakdown, not just a number.** Each job gets 0–100 plus what to lead with,
   what they'll push back on, what to fix before applying, estimated hours of
   effort, interview odds, and a recommendation. ([review/job_view.py](review/job_view.py))
-- **A "why me" pitch** is written for strong matches — 3–4 sentences mapping your
-  evidence to their top requirements, ready for the Anschreiben.
 - **Interview odds are graded on a curve.** The weakest slice is downgraded
   relative to the run plus the few hundred most recently scored jobs, because an
   absolute floor fired on every job ever scored and nothing could reach "apply
@@ -164,7 +162,7 @@ In the Supabase SQL editor, run `supabase_setup/init.sql`, then each migration i
 
 ```
 add_score_breakdown.sql       full LLM breakdown alongside the numeric score
-add_why_me_pitch.sql          the generated pitch for strong matches
+add_why_me_pitch.sql          pitches from older runs (no longer generated)
 add_application_outcomes.sql  interview / rejection / offer tracking
 add_dismissal.sql             soft skip, with a reason
 add_deleted_jobs.sql          hard delete, with a tombstone so it stays deleted
@@ -232,8 +230,7 @@ listing the jobs *that run* scored at or above `EMAIL_ALERT_MIN_SCORE` (default
 70). English-language ads have a lower bar, `EMAIL_ALERT_MIN_SCORE_ENGLISH`
 (default 55, never above the general one), because both interviews so far came
 from English ads scored 58. Below the general bar a job recommended *skip* is
-never mailed, and the "why me" pitch is written at the same bar, so an early
-English match arrives with one. Set the English value equal to the general one
+never mailed. Set the English value equal to the general one
 to turn the lower bar off. A run with nothing above the bar sends nothing. A job is scored once, so no
 job is ever alerted twice, and an unreachable mail server is logged rather than
 failing the run.
@@ -318,7 +315,7 @@ sources/           where jobs come from
     user_agents.py     user-agent pool
 
 scoring/           posting → ranked, explained score
-    score_jobs.py      the screening pass, the full scoring pass, the pitches
+    score_jobs.py      the screening pass and the full scoring pass
     llm_client.py      LiteLLM wrapper: rate limits, retries, daily budget
     manual_jobs.py     jobs you added by hand, scored like the rest
     notify.py          email alert when a run turns up a strong match

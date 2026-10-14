@@ -81,9 +81,6 @@ class ScreenResult(BaseModel):
         "True if this is a structured graduate/trainee programme (fixed intake dates, cohort, "
         "rotations, assessment centre) rather than a standard role"))
 
-class PitchOutput(BaseModel):
-    pitch: str = Field(..., description="3-4 sentence first-person pitch mapping the candidate's strongest evidence to the job's top requirements")
-
 class HardGate(BaseModel):
     """
     One requirement the candidate might not clear.

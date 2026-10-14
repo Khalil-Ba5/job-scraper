@@ -535,25 +535,6 @@ def record_custom_cv_score(job_id: str, custom_score: int) -> bool:
         return False
 
 
-def update_job_pitch(job_id: str, pitch: str) -> bool:
-    """Saves the generated 'why me' pitch for a job. Non-fatal if the column doesn't exist yet."""
-    if not job_id or not pitch:
-        return False
-    try:
-        supabase.table(config.SUPABASE_TABLE_NAME)\
-                .update({"why_me_pitch": pitch})\
-                .eq("job_id", job_id)\
-                .execute()
-        logging.info(f"Saved why-me pitch for job_id {job_id}.")
-        return True
-    except Exception as e:
-        if "why_me_pitch" in str(e):
-            logging.warning("why_me_pitch column missing — run supabase_setup/add_why_me_pitch.sql to enable pitches.")
-        else:
-            logging.error(f"Error saving pitch for job_id {job_id}: {e}")
-        return False
-
-
 def update_job_url(job_id: str, job_url: str) -> bool:
     """Updates the job_url for a specific job in the Supabase 'jobs' table."""
     if not job_id or not job_url:
