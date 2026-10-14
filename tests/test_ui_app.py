@@ -14,7 +14,7 @@ from review import apply_queue
 from review import calibration
 from db import supabase_utils
 
-pytest.importorskip("streamlit")
+st = pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 UI_APP_PATH = str(Path(__file__).parent.parent / "ui_app.py")
@@ -96,6 +96,9 @@ def app(monkeypatch):
     # Sidebar and calibration reads that would otherwise go to the network.
     monkeypatch.setattr(supabase_utils, "get_scrape_pulse", lambda **kw: None)
     monkeypatch.setattr(supabase_utils, "get_skip_reason_counts", lambda: {})
+    # The app's reads go through st.cache_data, which lives for the whole
+    # process: without this, one test's fake rows are served to the next.
+    st.cache_data.clear()
     return AppTest.from_file(UI_APP_PATH, default_timeout=60)
 
 
@@ -260,6 +263,35 @@ class TestJobsToApplyPage:
         list_app.run()
         assert "Open posting" not in markdown_text(list_app)
 
+    def test_reads_are_cached_across_reruns_and_dropped_after_a_write(self, app, monkeypatch):
+        """Every click reruns the script; it must not re-fetch 999 rows each time.
+
+        A write has to drop the cache, though, or the job you just marked
+        applied would sit in the queue until the TTL ran out.
+        """
+        fetches = []
+        monkeypatch.setattr(supabase_utils, "get_top_scored_jobs_to_apply",
+                            lambda limit: fetches.append(limit) or list(FAKE_TODAY_JOBS))
+        monkeypatch.setattr(supabase_utils, "mark_job_applied", lambda jid: True)
+        monkeypatch.setattr(supabase_utils, "update_application_stage", lambda *a, **k: True)
+        app.run()
+        app.run()
+        assert len(fetches) == 1, "the second run is served from the cache"
+        app.radio(key="queue_view").set_value("list").run()
+        app.button("apply_j1").click().run()
+        assert len(fetches) == 2, "the write dropped the cache"
+
+    def test_an_empty_or_failed_read_is_not_cached(self, app, monkeypatch):
+        """The readers return [] on an outage too; caching that hides recovery."""
+        rows = []
+        monkeypatch.setattr(supabase_utils, "get_top_scored_jobs_to_apply",
+                            lambda limit: list(rows))
+        app.run()
+        assert any("No scored jobs" in i.value for i in app.info)
+        rows.extend(FAKE_TODAY_JOBS)
+        app.run()
+        assert not any("No scored jobs" in i.value for i in app.info)
+
     def test_mark_applied_from_inside_the_dialog(self, list_app, monkeypatch):
         calls = []
         monkeypatch.setattr(supabase_utils, "mark_job_applied",
@@ -295,6 +327,7 @@ class TestJobsToApplyPage:
                  "resume_score": 80, "job_url": None, "scraped_at": _TODAY,
                  "score_breakdown": {}}]
         monkeypatch.setattr(supabase_utils, "get_top_scored_jobs_to_apply", lambda limit: bare)
+        st.cache_data.clear()  # the data changed under a running session: the TTL ran out
         list_app.run()
         list_app.button("details_b1").click().run()
         assert not list_app.exception
@@ -305,6 +338,7 @@ class TestJobsToApplyPage:
                  "resume_score": 80, "job_url": None, "scraped_at": _TODAY,
                  "score_breakdown": {"overall_score": 80, "screen_only": True}}]
         monkeypatch.setattr(supabase_utils, "get_top_scored_jobs_to_apply", lambda limit: bare)
+        st.cache_data.clear()  # the data changed under a running session: the TTL ran out
         list_app.run()
         assert not list_app.exception
         assert any("Bare Job" in m.value for m in list_app.markdown)
@@ -355,6 +389,7 @@ class TestJobsToApplyPage:
 
     def test_empty_state(self, list_app, monkeypatch):
         monkeypatch.setattr(supabase_utils, "get_top_scored_jobs_to_apply", lambda limit: [])
+        st.cache_data.clear()  # the data changed under a running session: the TTL ran out
         list_app.run()
         assert not list_app.exception
         assert any("No scored jobs" in i.value for i in list_app.info)

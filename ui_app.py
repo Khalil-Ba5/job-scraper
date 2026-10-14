@@ -95,21 +95,95 @@ DEFAULT_MIN_SCORE = 0
 
 st.set_page_config(page_title="Job Hunt", layout="wide", initial_sidebar_state="expanded")
 
-# Filled once per script run. Streamlit re-executes this file top to bottom on
-# every interaction, so this is a per-run memo, not a cache: the sidebar and
-# the page both need the queue and must not query it twice.
+# Supabase reads are cached across reruns. Streamlit re-executes this file on
+# every click, and uncached, each click re-fetched the queue and the
+# applications (up to 999 rows each, breakdowns included) plus the sidebar's
+# pulse. Every write below calls refresh_data() before its st.rerun(), so your
+# own changes show at once; the TTL only bounds how long a scrape run landing
+# in the background takes to appear.
+DATA_TTL_SECONDS = 120
+# The market panel reads every scored posting, paged, and only moves when the
+# pipeline scores more of them.
+MARKET_TTL_SECONDS = 600
+
+
+class _NotCached(Exception):
+    """Carries an empty result out of a cached loader so it is not cached.
+
+    The supabase_utils readers return [] / None / {} on a failed query as well
+    as on a genuinely empty one. Caching that would keep an outage on screen
+    for the whole TTL, even across a browser refresh. An empty answer is cheap
+    to ask for again, and st.cache_data never caches a raised exception.
+    """
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+
+
+def _keep_if_present(value):
+    if not value:
+        raise _NotCached(value)
+    return value
+
+
+def _read(loader, *args, **kwargs):
+    try:
+        return loader(*args, **kwargs)
+    except _NotCached as empty:
+        return empty.value
+
+
+@st.cache_data(ttl=DATA_TTL_SECONDS, show_spinner=False)
+def _cached_queue():
+    return _keep_if_present(supabase_utils.get_top_scored_jobs_to_apply(999))
+
+
+@st.cache_data(ttl=DATA_TTL_SECONDS, show_spinner=False)
+def _cached_applied():
+    return _keep_if_present(supabase_utils.get_applied_jobs_with_outcomes(999))
+
+
+@st.cache_data(ttl=DATA_TTL_SECONDS, show_spinner=False)
+def _cached_pulse(bar):
+    return _keep_if_present(supabase_utils.get_scrape_pulse(bar=bar))
+
+
+@st.cache_data(ttl=DATA_TTL_SECONDS, show_spinner=False)
+def _cached_skip_counts():
+    return _keep_if_present(supabase_utils.get_skip_reason_counts())
+
+
+@st.cache_data(ttl=MARKET_TTL_SECONDS, show_spinner=False)
+def _cached_market(min_score):
+    return _keep_if_present(supabase_utils.get_breakdowns_above_score(min_score))
+
+
+@st.cache_data(ttl=DATA_TTL_SECONDS, show_spinner=False)
+def _cached_job_with_description(job_id):
+    return _keep_if_present(supabase_utils.get_job_with_description(job_id))
+
+
+def refresh_data():
+    """Drop every cached read, so the rerun after a write shows what is stored."""
+    st.cache_data.clear()
+    _RUN.clear()
+
+
+# Filled once per script run. st.cache_data hands back a fresh copy on every
+# call, and the sidebar and the page both need the queue, so this keeps it to
+# one copy per run.
 _RUN = {}
 
 
 def load_queue():
     if "queue" not in _RUN:
-        _RUN["queue"] = supabase_utils.get_top_scored_jobs_to_apply(999)
+        _RUN["queue"] = _read(_cached_queue)
     return _RUN["queue"]
 
 
 def load_applied():
     if "applied" not in _RUN:
-        _RUN["applied"] = supabase_utils.get_applied_jobs_with_outcomes(999)
+        _RUN["applied"] = _read(_cached_applied)
     return _RUN["applied"]
 
 
@@ -209,6 +283,7 @@ def close_posting(job):
     """
     job_id = job.get("job_id")
     if supabase_utils.mark_job_closed(job_id):
+        refresh_data()
         flash_saved(f"Closed: {job.get('job_title') or job_id}")
         st.rerun()
     else:
@@ -246,7 +321,7 @@ def render_sidebar():
                     go(page_id)
                     st.rerun()
 
-        pulse = supabase_utils.get_scrape_pulse(bar=SCORE_BAR)
+        pulse = _read(_cached_pulse, SCORE_BAR)
         when = ""
         if pulse and pulse.get("last_scraped_at"):
             when = apply_queue.format_found({"scraped_at": pulse["last_scraped_at"]}) or ""
@@ -471,6 +546,7 @@ def mark_applied(job):
         flash_failed(f"Could not mark \"{title}\" as applied — it is still in the queue. "
                      "Supabase rejected or dropped the write; the terminal running "
                      "Streamlit has the error. Try again.")
+    refresh_data()
     st.rerun()
 
 
@@ -488,6 +564,7 @@ def skip_job(job, reason):
     else:
         flash_failed(f"Could not skip \"{title}\" — it is still in the queue. Has "
                      "supabase_setup/add_dismissal.sql been run? The terminal has the error.")
+    refresh_data()
     st.rerun()
 
 
@@ -510,7 +587,7 @@ def delete_posting(job, reason, note=""):
         st.session_state.pop("deleting", None)
         # The cached queue still holds the deleted row, and the card would render
         # one more time before the next load.
-        _RUN.pop("queue", None)
+        refresh_data()
         flash_saved(f"Deleted: {title} "
                     f"({apply_queue.DELETE_REASON_LABELS.get(reason, reason)})")
         st.rerun()
@@ -858,6 +935,7 @@ def render_undo_skip():
     with cols[1]:
         if st.button("Undo skip", key="undo_skip", width="stretch"):
             if supabase_utils.undismiss_job(last["job_id"]):
+                refresh_data()
                 st.session_state.pop("last_skipped", None)
                 st.session_state["cursor_job"] = last["job_id"]
                 flash_saved(f"Restored: {last['title']}")
@@ -953,6 +1031,8 @@ def render_ghost_prompt(jobs):
             if st.button(f"Mark all {n} ghosted", key="ghost_all", type="primary", width="stretch"):
                 failed = [j.get("job_id") for j in stale
                           if not supabase_utils.update_application_stage(j.get("job_id"), "ghosted")]
+                # Even on a partial failure: the ones that did land are stored.
+                refresh_data()
                 if failed:
                     st.error(f"{len(failed)} could not be updated — check logs.")
                 else:
@@ -1010,6 +1090,7 @@ def render_update_form(job):
             ok = supabase_utils.update_application_stage(
                 job_id, new_stage, rejection_reason=reason or None, notes=notes or None)
             if ok:
+                refresh_data()
                 flash_saved(f"Saved: {title} → {STAGE_LABELS.get(new_stage, new_stage)}")
                 st.rerun()
             else:
@@ -1236,7 +1317,7 @@ def render_calibration_page():
     with panels[1]:
         with st.container(border=True):
             rejections = calibration.rejection_reason_counts(jobs)
-            skips = supabase_utils.get_skip_reason_counts()
+            skips = _read(_cached_skip_counts)
             combined = [{"label": REJECTION_LABELS.get(k, k.replace("_", " ")), "n": v,
                          "fill": T.PURPLE[500]} for k, v in rejections.items()]
             combined += [{"label": apply_queue.SKIP_REASON_LABELS.get(k, k.replace("_", " ")),
@@ -1267,7 +1348,7 @@ def render_calibration_page():
 def load_market_breakdowns():
     """Every scored job at or above the clustering floor, memoised for this run."""
     if "market" not in _RUN:
-        _RUN["market"] = supabase_utils.get_breakdowns_above_score(cluster_settings.MIN_SCORE)
+        _RUN["market"] = _read(_cached_market, cluster_settings.MIN_SCORE)
     return _RUN["market"]
 
 
@@ -1724,7 +1805,7 @@ def render_generate_cv_page():
 
     # The queue rows carry no description; the writer and the interview both need
     # one, so the full row is fetched only for the posting actually chosen.
-    job = supabase_utils.get_job_with_description(labels[choice]["job_id"])
+    job = _read(_cached_job_with_description, labels[choice]["job_id"])
     if not job:
         st.error("Could not load that posting.")
         return
