@@ -527,42 +527,61 @@ def process_linkedin_query(search_query: str, location: str, limit: int = None,
 
     ids_to_fetch = new_job_ids_to_process
 
+    def _accept(job_id, details):
+        nonlocal processed_count
+        if is_internship_role(details.get('job_title'), details.get('level')):
+            logging.info(f"Skipping internship/thesis job: {details.get('job_title')} (ID: {job_id})")
+            _filtered("internship")
+            return
+        if is_freelance_role(details.get('job_title'), details.get('level'),
+                             details.get('description')):
+            logging.info(f"Skipping freelance/contract job: {details.get('job_title')} (ID: {job_id})")
+            _filtered("freelance")
+            return
+        details['program_type'] = program_type_of(details.get('job_title'))
+        company_title_key = dedup.identity_key(details.get('company'),
+                                               details.get('job_title'),
+                                               details.get('location'))
+        if all(company_title_key) and company_title_key in company_title_set:
+            logging.info(f"Skipping repost (company/title already in DB): {details.get('job_title')} @ {details.get('company')} (ID: {job_id})")
+            _filtered("repost_same_company_title")
+            return
+        if all(company_title_key):
+            company_title_set.add(company_title_key)
+        description = details.get('description')
+        if description and description.strip():
+            if 'job_id' in details and details['job_id'] is not None:
+                detailed_new_jobs.append(details)
+                processed_count += 1
+            else:
+                logging.warning(f"Fetched details for {job_id} but missing 'job_id' key. Skipping.")
+                _filtered("missing_job_id")
+        else:
+            logging.warning(f"Skipping job ID {job_id} due to missing or empty description.")
+            _filtered("no_description")
+
+    # A failed fetch is almost always LinkedIn throttling (429), which clears after a
+    # pause, so defer those jobs to a second pass instead of losing them.
+    deferred_ids = []
     for job_id in ids_to_fetch:
         details = _fetch_linkedin_job_details(job_id)
         if details:
-            if is_internship_role(details.get('job_title'), details.get('level')):
-                logging.info(f"Skipping internship/thesis job: {details.get('job_title')} (ID: {job_id})")
-                _filtered("internship")
-                continue
-            if is_freelance_role(details.get('job_title'), details.get('level'),
-                                 details.get('description')):
-                logging.info(f"Skipping freelance/contract job: {details.get('job_title')} (ID: {job_id})")
-                _filtered("freelance")
-                continue
-            details['program_type'] = program_type_of(details.get('job_title'))
-            company_title_key = dedup.identity_key(details.get('company'),
-                                                   details.get('job_title'),
-                                                   details.get('location'))
-            if all(company_title_key) and company_title_key in company_title_set:
-                logging.info(f"Skipping repost (company/title already in DB): {details.get('job_title')} @ {details.get('company')} (ID: {job_id})")
-                _filtered("repost_same_company_title")
-                continue
-            if all(company_title_key):
-                company_title_set.add(company_title_key)
-            description = details.get('description')
-            if description and description.strip(): 
-                if 'job_id' in details and details['job_id'] is not None:
-                    detailed_new_jobs.append(details)
-                    processed_count += 1
-                else:
-                    logging.warning(f"Fetched details for {job_id} but missing 'job_id' key. Skipping.")
-                    _filtered("missing_job_id")
-            else:
-                logging.warning(f"Skipping job ID {job_id} due to missing or empty description.") 
-                _filtered("no_description")
+            _accept(job_id, details)
         else:
-            logging.warning(f"Skipping job ID {job_id} as detail fetching failed or returned no data.") 
-            _filtered("detail_fetch_failed")
+            logging.warning(f"Deferring job ID {job_id}: detail fetching failed, will retry after the other jobs.")
+            deferred_ids.append(job_id)
+
+    if deferred_ids:
+        cooldown = config.DEFERRED_RETRY_COOLDOWN_SECONDS
+        logging.info(f"Retrying {len(deferred_ids)} deferred job(s) after a {cooldown}s cooldown...")
+        time.sleep(cooldown)
+        for job_id in deferred_ids:
+            details = _fetch_linkedin_job_details(job_id)
+            if details:
+                _accept(job_id, details)
+            else:
+                logging.warning(f"Skipping job ID {job_id} as detail fetching failed again on the deferred retry.")
+                _filtered("detail_fetch_failed")
 
 
     logging.info(f"--- Finished Phase 2: Successfully fetched details for {processed_count} new job(s) ---")

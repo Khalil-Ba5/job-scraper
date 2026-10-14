@@ -268,6 +268,9 @@ LINKEDIN_MAX_START = _int_env("LINKEDIN_MAX_START", 10)
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 15
+# Jobs whose detail fetch still fails (usually a 429) are retried once more after
+# the rest of the query's jobs, following this cooldown, instead of being dropped.
+DEFERRED_RETRY_COOLDOWN_SECONDS = 90
 
 JOB_EXPIRY_DAYS = 30
 JOB_CHECK_DAYS = 3
