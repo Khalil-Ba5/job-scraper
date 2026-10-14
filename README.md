@@ -229,7 +229,12 @@ and `run_all.yml` runs the whole pipeline four times a day on its own.
 
 Off by default. When enabled, `scoring/score_jobs.py` sends one mail at the end of a run
 listing the jobs *that run* scored at or above `EMAIL_ALERT_MIN_SCORE` (default
-70). A run with nothing above the bar sends nothing. A job is scored once, so no
+70). English-language ads have a lower bar, `EMAIL_ALERT_MIN_SCORE_ENGLISH`
+(default 55, never above the general one), because both interviews so far came
+from English ads scored 58. Below the general bar a job recommended *skip* is
+never mailed, and the "why me" pitch is written at the same bar, so an early
+English match arrives with one. Set the English value equal to the general one
+to turn the lower bar off. A run with nothing above the bar sends nothing. A job is scored once, so no
 job is ever alerted twice, and an unreachable mail server is logged rather than
 failing the run.
 
@@ -240,6 +245,7 @@ is always refused.
 ```
 EMAIL_ALERTS_ENABLED=true
 EMAIL_ALERT_MIN_SCORE=70
+EMAIL_ALERT_MIN_SCORE_ENGLISH=55   # English-language ads; set to 70 to turn off
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587                 # 465 for implicit TLS; anything else uses STARTTLS
 SMTP_USER=you@gmail.com
@@ -255,7 +261,8 @@ python -m scoring.notify --test
 ```
 
 For GitHub Actions, add the `SMTP_*` and `EMAIL_FROM`/`EMAIL_TO` values as
-repository **secrets** and the two `EMAIL_ALERT*` values as repository
+repository **secrets** and `EMAIL_ALERTS_ENABLED`, `EMAIL_ALERT_MIN_SCORE` and
+`EMAIL_ALERT_MIN_SCORE_ENGLISH` as repository
 **variables** (Settings → Secrets and variables → Actions).
 
 ---

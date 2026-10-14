@@ -23,6 +23,7 @@ def mailable(monkeypatch):
     """Credentials present and alerts on, so only the logic under test decides."""
     monkeypatch.setattr(config, "EMAIL_ALERTS_ENABLED", True)
     monkeypatch.setattr(config, "EMAIL_ALERT_MIN_SCORE", 70)
+    monkeypatch.setattr(config, "EMAIL_ALERT_MIN_SCORE_ENGLISH", 55)
     monkeypatch.setattr(config, "EMAIL_ALERT_MAX_JOBS", 10)
     monkeypatch.setattr(config, "SMTP_HOST", "smtp.test")
     monkeypatch.setattr(config, "SMTP_PORT", 587)
@@ -150,11 +151,33 @@ class TestEnglishAdBar:
     def test_an_explicit_min_score_overrides_both(self, bars):
         assert notify.alert_worthy([english_job("en", 58)], min_score=60) == []
 
-    def test_a_pydantic_breakdown_is_read_too(self, bars):
-        from types import SimpleNamespace
-        entry = job("en", 58)
-        entry["score_breakdown"] = SimpleNamespace(model_dump=lambda: {"jd_language": "en"})
+    def test_a_breakdown_the_scorer_left_without_a_language_is_not_english(self, bars):
+        """A dumped ScoreBreakdown always carries jd_language; its default must not be 'en'."""
+        from models import ScoreBreakdown
+        default = ScoreBreakdown.model_fields["jd_language"].default
+        entry = job("x", 60)
+        entry["score_breakdown"]["jd_language"] = default
+        assert default != "en"
+        assert notify.alert_worthy([entry]) == []
+
+    def test_a_skip_under_the_general_bar_is_not_mailed(self, bars):
+        """The lower bar must not mail what the scorer or the P(interview) gate ruled out."""
+        entry = english_job("en", 58)
+        entry["score_breakdown"]["recommendation"] = "skip"
+        assert notify.alert_worthy([entry]) == []
+
+    def test_a_gate_negotiable_job_under_the_general_bar_is_mailed(self, bars):
+        entry = english_job("en", 58)
+        entry["score_breakdown"]["recommendation"] = "apply_if_gate_negotiable"
         assert notify.alert_worthy([entry])
+
+    def test_at_the_general_bar_the_recommendation_does_not_matter(self, bars):
+        entry = english_job("en", 72)
+        entry["score_breakdown"]["recommendation"] = "skip"
+        assert notify.alert_worthy([entry])
+
+    def test_a_mixed_language_ad_keeps_the_general_bar(self, bars):
+        assert notify.alert_worthy([english_job("mx", 60, "mixed")]) == []
 
     def test_the_mail_names_both_bars(self, bars):
         _, text, body_html = notify.build_message([english_job("en", 58)])

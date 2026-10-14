@@ -472,6 +472,13 @@ def run_screening_phase() -> list:
     return passers[:config.JOBS_TO_SCORE_PER_RUN]
 
 
+def should_pitch(breakdown: ScoreBreakdown) -> bool:
+    """Does this job get a "why me" pitch? At the alert bar, with a positive recommendation."""
+    bar = notify.threshold_for({"score_breakdown": {"jd_language": breakdown.jd_language}})
+    return (breakdown.overall_score >= bar
+            and breakdown.recommendation in ("apply_now", "apply_after_fixes"))
+
+
 def generate_why_me_pitch(resume_text: str, job_details: Dict[str, Any], breakdown: ScoreBreakdown) -> Optional[str]:
     """
     For strong matches: 3-4 first-person sentences mapping the candidate's strongest
@@ -1249,8 +1256,10 @@ def main(argv: list | None = None) -> int:
                             "resume_score": breakdown.overall_score,
                             "score_breakdown": breakdown,
                         })
-                        # Strong matches get a "why me" pitch for the application message / Anschreiben
-                        if breakdown.overall_score >= 70 and breakdown.recommendation in ("apply_now", "apply_after_fixes"):
+                        # Strong matches get a "why me" pitch for the application message / Anschreiben.
+                        # Same bar as the email alert, so a job mailed to apply early (an
+                        # English ad from 55) arrives with its pitch already written.
+                        if should_pitch(breakdown):
                             pitch = generate_why_me_pitch(default_resume_text, job, breakdown)
                             if pitch:
                                 supabase_utils.update_job_pitch(job_id, pitch)

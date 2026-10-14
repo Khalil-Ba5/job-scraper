@@ -30,11 +30,20 @@ from sources.role_type import is_program
 
 
 def is_english_ad(job: Dict[str, Any]) -> bool:
-    """Is the ad written in English, by the scorer's jd_language field?"""
+    """Is the ad written in English, by the scorer's jd_language field?
+
+    'en' only. A 'mixed' ad goes with the German ones, as it does in the queue
+    ranking (apply_queue.is_german_ad): the outcome data that motivates the
+    lower bar counted de and mixed together, and neither has produced an
+    interview. A missing language is not English either.
+    """
     breakdown = job.get("score_breakdown") or {}
-    if not isinstance(breakdown, dict):
-        breakdown = getattr(breakdown, "model_dump", lambda: {})()
     return str(breakdown.get("jd_language") or "").strip().lower() == "en"
+
+
+def english_bar() -> int:
+    """The bar for an English-language ad: never above the general one."""
+    return min(config.EMAIL_ALERT_MIN_SCORE, config.EMAIL_ALERT_MIN_SCORE_ENGLISH)
 
 
 def threshold_for(job: Dict[str, Any], min_score: Optional[int] = None) -> int:
@@ -46,16 +55,32 @@ def threshold_for(job: Dict[str, Any], min_score: Optional[int] = None) -> int:
     """
     if min_score is not None:
         return min_score
-    general = config.EMAIL_ALERT_MIN_SCORE
-    if is_english_ad(job):
-        return min(general, getattr(config, "EMAIL_ALERT_MIN_SCORE_ENGLISH", general))
-    return general
+    return english_bar() if is_english_ad(job) else config.EMAIL_ALERT_MIN_SCORE
+
+
+def _recommendation(job: Dict[str, Any]) -> str:
+    return str((job.get("score_breakdown") or {}).get("recommendation") or "")
 
 
 def alert_worthy(jobs: List[Dict[str, Any]],
                  min_score: Optional[int] = None) -> List[Dict[str, Any]]:
-    """The jobs from a run that are worth interrupting someone for, best first."""
-    matches = [j for j in jobs if (j.get("resume_score") or 0) >= threshold_for(j, min_score)]
+    """The jobs from a run that are worth interrupting someone for, best first.
+
+    A job that clears only the lower English bar must not also carry a 'skip'
+    recommendation: below the general bar the scorer, a hard gate or the
+    P(interview) downgrade has often ruled it out, and mailing it as a match
+    would contradict the queue. At or above the general bar the score alone
+    decides, as it always has.
+    """
+    general = config.EMAIL_ALERT_MIN_SCORE if min_score is None else min_score
+
+    def worthy(job: Dict[str, Any]) -> bool:
+        score = job.get("resume_score") or 0
+        if score < threshold_for(job, min_score):
+            return False
+        return score >= general or _recommendation(job) != "skip"
+
+    matches = [j for j in jobs if worthy(j)]
     return sorted(matches, key=lambda j: j.get("resume_score") or 0, reverse=True)
 
 
@@ -63,8 +88,7 @@ def _threshold_line(min_score: Optional[int] = None) -> str:
     """How the bar reads in the mail, naming the English one when it differs."""
     if min_score is not None:
         return f"{min_score}+"
-    general = config.EMAIL_ALERT_MIN_SCORE
-    english = min(general, getattr(config, "EMAIL_ALERT_MIN_SCORE_ENGLISH", general))
+    general, english = config.EMAIL_ALERT_MIN_SCORE, english_bar()
     return f"{general}+" if english == general else f"{general}+ ({english}+ for English-language ads)"
 
 

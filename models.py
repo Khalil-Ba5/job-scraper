@@ -164,7 +164,9 @@ class ScoreBreakdown(BaseModel):
         "'unclear' (the wording is genuinely ambiguous). 'unstated' is NOT 'none': it means "
         "unknown-and-worth-asking, and it must never be inferred from the ad's language."))
     years_experience_required: int = Field(0, ge=0, description="Minimum years of professional experience the JD explicitly requires. 0 if not stated or entry-level.")
-    jd_language: str = Field("en", description="Language the job description is written in: 'en', 'de', or 'mixed'")
+    # 'unknown' rather than 'en' when the scorer omits it: an English default made
+    # every such ad read as English, and English ads get the lower alert bar.
+    jd_language: str = Field("unknown", description="Language the job description is written in: 'en', 'de', or 'mixed'")
     visa_sponsorship_mentioned: str = Field("unclear", description="Does the JD mention visa/relocation support: 'yes', 'no', or 'unclear'")
     key_matching_skills: List[str] = Field(default_factory=list, description="Top matching skills — max 4, each max 15 words")
     key_gaps: List[str] = Field(default_factory=list, description="Most important gaps — max 4, each max 15 words")
