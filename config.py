@@ -234,7 +234,9 @@ P_INTERVIEW_ABSOLUTE_FLOOR = 0.10  # the old absolute rule, kept only as the sma
 # its own. Rows, not jobs: screen-only rows have no odds and are skipped.
 P_INTERVIEW_REFERENCE_ROWS = 400
 MAX_JOBS_PER_SEARCH = {
-    "linkedin": 5,
+    # Raised from 5: every run dropped 11-38 new LinkedIn postings at this cap,
+    # and LinkedIn carries nearly all the English-language ads (213 of 218).
+    "linkedin": _int_env("LINKEDIN_MAX_JOBS_PER_SEARCH", 10),
     # Higher than LinkedIn's: a JSON API with no politeness delays and no blocking,
     # so the only cost of a larger number is the screening pass downstream.
     "arbeitsagentur": _int_env("ARBEITSAGENTUR_MAX_JOBS_PER_SEARCH", 25),
@@ -252,7 +254,11 @@ LLM_DAILY_REQUEST_BUDGET = 0
 # keeps consecutive calls inside the 5-minute prompt-cache window.
 LLM_REQUEST_DELAY_SECONDS = 2
 
-LINKEDIN_MAX_START = 1 
+# Offset of the last results page fetched; pages are 10 apart. 1 meant page one
+# only, so every run fetched exactly 28 queries x 10 = 280 and stopped there.
+# 10 adds the second page. Env-overridable, so a run that starts getting blocked
+# can be dialled back to 0 without a commit.
+LINKEDIN_MAX_START = _int_env("LINKEDIN_MAX_START", 10)
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 15
