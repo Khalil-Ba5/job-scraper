@@ -317,6 +317,34 @@ class TestGermanRequirement:
         assert ScoreBreakdown.model_fields["german_required"].default == "unstated"
 
 
+class TestScreenSeniorityRule:
+    """LinkedIn labels most ordinary roles "Mid-Senior level". Read as "explicitly
+    Senior", it failed 16 of 86 English screen-outs whose titles said nothing of
+    the kind; a dry run of the reworded rule recovered 11 and kept 8 of 9
+    Senior/Lead/Staff titles out."""
+
+    def _prompt(self, monkeypatch, level):
+        captured = {}
+
+        def fake(prompt, **kwargs):
+            captured["prompt"] = prompt
+            raise RuntimeError("stop after the prompt is built")
+
+        monkeypatch.setattr(score_jobs.screen_client, "generate_content", fake)
+        score_jobs.screen_job_with_ai({"job_id": "j1", "job_title": "AI Engineer",
+                                       "level": level, "description": "Build models."})
+        return captured["prompt"]
+
+    def test_the_linkedin_label_is_marked_as_not_a_requirement(self, monkeypatch):
+        prompt = self._prompt(monkeypatch, "Mid-Senior level")
+        assert "Level (LinkedIn's broad category, not a requirement): Mid-Senior level" in prompt
+        assert "Never fail rule 4 on that label alone" in prompt
+
+    def test_a_senior_title_still_fails(self, monkeypatch):
+        prompt = self._prompt(monkeypatch, "Entry level")
+        assert 'containing "Senior" (or "Sr.") fails' in prompt
+
+
 class TestScreenGermanLabelling:
     """The screen is the only pass that sees every job, so it is where the German
     distribution has to be measured — jobs that fail the screen never reach the

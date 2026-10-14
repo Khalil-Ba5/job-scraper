@@ -311,7 +311,13 @@ def screen_job_with_ai(job_details: Dict[str, Any]) -> Optional[ScreenResult]:
    them would discard most of the German market on a proxy rather than on what the employer asked for.
 2. The JD explicitly requires 4+ years of professional experience.
 3. The role is NOT in data science / machine learning / AI / data or software engineering (e.g. sales, finance, accounting, mechanical engineering, marketing, nursing).
-4. The role is explicitly Senior / Staff / Principal / Lead / Head of.
+   Hands-on software engineering of any kind PASSES this rule — backend, platform, forward-deployed,
+   solutions engineering that ships code. Only non-technical work fails it.
+4. The TITLE or the text says the role is Senior / Staff / Principal / Lead / Head of. A title
+   containing "Senior" (or "Sr.") fails, whatever the skills match; "(Senior)" in brackets fails too.
+   "Member of Technical Staff" is a flat title at some AI labs, not a Staff level.
+   The "Level" line below is LinkedIn's own broad seniority category, not the employer's words:
+   LinkedIn labels most ordinary roles "Mid-Senior level". Never fail rule 4 on that label alone.
 
 ## GRADUATE / TRAINEE PROGRAMMES
 A structured intake (Traineeprogramm, graduate programme, rotational programme, residency) is
@@ -336,7 +342,7 @@ cohort, rotations or an assessment centre, even when the title does not say prog
 ## JOB
 Title: {job_details.get('job_title', 'N/A')}
 Company: {job_details.get('company', 'N/A')}
-Level: {job_details.get('level', 'N/A')}
+Level (LinkedIn's broad category, not a requirement): {job_details.get('level', 'N/A')}
 
 {description}
 """
@@ -733,7 +739,7 @@ gates that fail or are unknown — a gate that passes needs no entry and no expl
     user_prompt = f"""--- JOB DESCRIPTION ---
 Job Title: {job_title}
 Company: {job_company}
-Level: {job_level}
+Level (LinkedIn's broad category, not a requirement): {job_level}
 {program_line}
 {job_description}
 --- END JOB DESCRIPTION ---
