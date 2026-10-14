@@ -103,7 +103,7 @@ SHORTCUTS = [
 
 SORT_MODES = ["score", "effort", "new"]
 SORT_MODE_LABELS = {
-    "score": "Best match",
+    "score": "Best match, English ads first",
     "effort": "Least effort",
     "new": "Newest",
 }
@@ -142,6 +142,19 @@ ROLE_TYPE_LABELS = {
     "roles": "Standard roles",
     "programs": "Programmes only",
 }
+
+
+def is_german_ad(job: Dict[str, Any]) -> bool:
+    """Is the ad written in German (or mixed)?
+
+    The language the ad is written in, not the level it demands. Through
+    mid-October, of the resolved applications, 0 of about 34 German-language ads
+    led to an interview against 2 of 14 English ones, including German ads that
+    named no level at all. The written language is the strongest predictor of an
+    interview in this data, so the default ranking puts it first.
+    """
+    breakdown = job.get("score_breakdown") or {}
+    return str(breakdown.get("jd_language") or "").strip().lower() in ("de", "mixed")
 
 
 def matches_role_type(job: Dict[str, Any], role_type: str) -> bool:
@@ -268,7 +281,8 @@ def sort_jobs(jobs: List[Dict[str, Any]], mode: str = "score") -> List[Dict[str,
     """
     Fixed rank order for the queue.
 
-    "score" is the default: highest first. "effort" sorts by the estimated hours
+    "score" is the default: English-language ads first, then highest score
+    within each group (see is_german_ad for why). "effort" sorts by the estimated hours
     ascending so a short evening can be spent on the applications that actually
     fit in it — but score still breaks ties, and jobs with no estimate sort last
     rather than pretending to be free.
@@ -287,7 +301,7 @@ def sort_jobs(jobs: List[Dict[str, Any]], mode: str = "score") -> List[Dict[str,
             return (hours is None, hours if hours is not None else 0.0,
                     -(job.get("resume_score") or 0))
         return sorted(jobs, key=key)
-    return sorted(jobs, key=lambda j: j.get("resume_score") or 0, reverse=True)
+    return sorted(jobs, key=lambda j: (is_german_ad(j), -(j.get("resume_score") or 0)))
 
 
 def clamp_cursor(index: int, length: int) -> int:

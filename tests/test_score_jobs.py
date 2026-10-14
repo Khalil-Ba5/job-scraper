@@ -194,6 +194,33 @@ class TestInterviewOddsDowngrade:
     def test_empty_batch_is_a_no_op(self):
         assert score_jobs.apply_interview_odds_downgrade([]) == []
 
+    def test_a_small_run_uses_the_percentile_once_history_is_added(self):
+        """At four runs a day a run scores ~8 jobs, below the minimum batch."""
+        batch = [make_breakdown(0.02), make_breakdown(0.30)]
+        history = [round(0.01 * i, 2) for i in range(1, 21)]  # 0.01 .. 0.20
+        changed = score_jobs.apply_interview_odds_downgrade(batch, history)
+
+        assert changed == [0]
+        assert batch[0].calibration_check["p_interview_downgrade"]["rule"] == "percentile"
+        assert batch[1].recommendation == "apply_now"
+
+    def test_history_excludes_this_runs_jobs_and_screen_only_rows(self, monkeypatch):
+        rows = [
+            {"job_id": "j1", "score_breakdown": {"competitive_context":
+                {"p_first_round_interview": {"after_fixes": 0.5}}}},
+            {"job_id": "old", "score_breakdown": {"competitive_context":
+                {"p_first_round_interview": {"after_fixes": 0.07}}}},
+            {"job_id": "screened", "score_breakdown": {"screen_only": True}},
+        ]
+        monkeypatch.setattr(score_jobs.supabase_utils, "get_score_breakdowns", lambda limit: rows)
+        assert score_jobs.recent_interview_odds({"j1"}) == [0.07]
+
+    def test_unreadable_history_falls_back_to_the_run(self, monkeypatch):
+        def broken(limit):
+            raise RuntimeError("down")
+        monkeypatch.setattr(score_jobs.supabase_utils, "get_score_breakdowns", broken)
+        assert score_jobs.recent_interview_odds(set()) == []
+
 
 class TestPercentile:
     def test_matches_linear_interpolation(self):

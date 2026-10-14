@@ -57,9 +57,10 @@ queue: read the verdict, open the posting, mark applied or skip with a reason.
   effort, interview odds, and a recommendation. ([review/job_view.py](review/job_view.py))
 - **A "why me" pitch** is written for strong matches — 3–4 sentences mapping your
   evidence to their top requirements, ready for the Anschreiben.
-- **Interview odds are graded on a curve.** The weakest slice of each run is
-  downgraded relative to that run, because an absolute floor fired on every job
-  ever scored and nothing could reach "apply now".
+- **Interview odds are graded on a curve.** The weakest slice is downgraded
+  relative to the run plus the few hundred most recently scored jobs, because an
+  absolute floor fired on every job ever scored and nothing could reach "apply
+  now" — and a single four-times-a-day run is too small to be its own curve.
 - **Any LLM provider.** Gemini, OpenAI, Anthropic, Groq, Ollama and ~400 more
   through LiteLLM, with rate limiting, backoff and a daily request budget.
   ([scoring/llm_client.py](scoring/llm_client.py))
@@ -77,7 +78,8 @@ fragments from there rather than styling inline.
   with its band ("Strong", "Worth it", "Marginal", "Long shot" — set against
   the observed distribution, not a school scale) and its place in the corpus,
   then the one-line verdict and the gates as chips, German always first. Sort
-  by best match, least effort or newest; a strip under the controls says what
+  by best match (English-language ads first, the strongest predictor of an
+  interview so far), least effort or newest; a strip under the controls says what
   the filters are hiding ("Older than 24 hours · 194", "Score under 70 · 12")
   and each chip drops that filter with one click, so a short queue never reads
   as an empty market.

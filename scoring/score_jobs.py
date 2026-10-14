@@ -898,7 +898,8 @@ def _interview_odds(breakdown: ScoreBreakdown) -> tuple[Optional[float], Optiona
     return getattr(p, "as_is", None), getattr(p, "after_fixes", None)
 
 
-def apply_interview_odds_downgrade(breakdowns: List[ScoreBreakdown]) -> List[int]:
+def apply_interview_odds_downgrade(breakdowns: List[ScoreBreakdown],
+                                   reference: Optional[List[float]] = None) -> List[int]:
     """Downgrade the recommendation of the weakest jobs in this run, in place.
 
     The old rule was absolute (`p_as_is < 0.10`) and fired on every job ever scored —
@@ -909,6 +910,12 @@ def apply_interview_odds_downgrade(breakdowns: List[ScoreBreakdown]) -> List[int
     `P_INTERVIEW_MIN_BATCH` fall back to the absolute rule, because a percentile over
     a handful of jobs is noise.
 
+    `reference` is p_after_fixes from recently scored jobs outside this batch,
+    and joins the distribution the percentile is taken over. Without it the rule
+    almost never ran: at four runs a day a run scores about 8 jobs, below the
+    minimum, so the absolute rule this replaced was back in force (one apply_now
+    across 305 full scores).
+
     The raw probabilities are never touched — this is a presentation decision, and it
     must be reversible without rescoring. Returns the indices that changed.
     """
@@ -916,12 +923,14 @@ def apply_interview_odds_downgrade(breakdowns: List[ScoreBreakdown]) -> List[int
     min_batch = getattr(config, "P_INTERVIEW_MIN_BATCH", 10)
     absolute_floor = getattr(config, "P_INTERVIEW_ABSOLUTE_FLOOR", 0.10)
 
-    after_fixes = sorted(p for _, p in map(_interview_odds, breakdowns) if p is not None)
+    after_fixes = sorted([p for _, p in map(_interview_odds, breakdowns) if p is not None]
+                         + [p for p in (reference or []) if p is not None])
     use_percentile = len(after_fixes) >= min_batch
     threshold = _percentile(after_fixes, floor_pct) if use_percentile else absolute_floor
     rule = "percentile" if use_percentile else "absolute"
     logging.info(
-        f"P(interview) gate: {rule} rule over {len(after_fixes)} scored job(s), "
+        f"P(interview) gate: {rule} rule over {len(after_fixes)} scored job(s) "
+        f"({len(reference or [])} from earlier runs), "
         f"threshold={threshold:.4f}"
     )
 
@@ -950,13 +959,40 @@ def apply_interview_odds_downgrade(breakdowns: List[ScoreBreakdown]) -> List[int
     return changed
 
 
+def recent_interview_odds(exclude_ids: set) -> List[float]:
+    """p_after_fixes from the most recently scored jobs, for the percentile gate.
+
+    Screen-only rows carry no interview odds and drop out here, so the row
+    count asked for is roughly double the jobs it yields. A failed read returns
+    [] and the gate falls back to the run alone, as it always did.
+    """
+    limit = getattr(config, "P_INTERVIEW_REFERENCE_ROWS", 400)
+    try:
+        rows = supabase_utils.get_score_breakdowns(limit)
+        if not isinstance(rows, list):
+            return []
+        values = []
+        for row in rows:
+            if row.get("job_id") in exclude_ids:
+                continue
+            context = (row.get("score_breakdown") or {}).get("competitive_context") or {}
+            value = (context.get("p_first_round_interview") or {}).get("after_fixes")
+            if isinstance(value, (int, float)):
+                values.append(float(value))
+        return values
+    except Exception as e:  # noqa: BLE001 - the gate must not fail a scoring run
+        logging.warning(f"Could not read recent interview odds ({e}); gating on this run alone.")
+        return []
+
+
 def finalize_batch_recommendations(scored: List[tuple], resume_score_stage: str = "initial") -> int:
-    """Apply the batch-relative downgrade to `[(job_id, breakdown), ...]` and re-persist
+    """Apply the relative downgrade to `[(job_id, breakdown), ...]` and re-persist
     only the rows whose recommendation actually changed. Returns the number re-persisted."""
     if not scored:
         return 0
     breakdowns = [b for _, b in scored]
-    changed = apply_interview_odds_downgrade(breakdowns)
+    reference = recent_interview_odds({job_id for job_id, _ in scored})
+    changed = apply_interview_odds_downgrade(breakdowns, reference)
     written = 0
     for i in changed:
         job_id, breakdown = scored[i]

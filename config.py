@@ -229,6 +229,10 @@ RESCORE_WITH_CUSTOM_RESUME = _bool_env("RESCORE_WITH_CUSTOM_RESUME", False)
 P_INTERVIEW_PERCENTILE_FLOOR = 40  # downgrade jobs below this percentile of the run's p_after_fixes
 P_INTERVIEW_MIN_BATCH = 10         # below this many scored jobs, percentiles are noise -> absolute fallback
 P_INTERVIEW_ABSOLUTE_FLOOR = 0.10  # the old absolute rule, kept only as the small-batch fallback
+# The percentile is taken over this run plus the most recent scored rows, because
+# a four-times-a-day run scores ~8 jobs and never reached P_INTERVIEW_MIN_BATCH on
+# its own. Rows, not jobs: screen-only rows have no odds and are skipped.
+P_INTERVIEW_REFERENCE_ROWS = 400
 MAX_JOBS_PER_SEARCH = {
     "linkedin": 5,
     # Higher than LinkedIn's: a JSON API with no politeness delays and no blocking,
