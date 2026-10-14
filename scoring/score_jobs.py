@@ -1029,7 +1029,20 @@ def extract_text_from_pdf_url(pdf_url: str) -> Optional[str]:
         return None
 
 def rescore_jobs_with_custom_resume():
-    """Fetches jobs with custom resumes and re-scores them."""
+    """Scores each job's tailored CV and records it BESIDE the real score.
+
+    The tailored CV was written by the model for this exact posting, so scoring
+    it with the same model measures how well the rewrite echoes the JD, not how
+    a recruiter will read the candidate. It used to overwrite resume_score, and
+    the outcomes show what that bought: the 8 resolved applications re-scored
+    this way scored 72-82 and produced no interview, while both interviews came
+    from jobs the honest score put at 58. resume_score, its breakdown and the
+    queue order now stay with the initial score; the tailored figure is kept as
+    score_breakdown.custom_cv_score for reference, and never triggers an alert.
+
+    Off by default (config.RESCORE_WITH_CUSTOM_RESUME): even as a side figure
+    it costs a full scoring call per job for a number nothing should act on.
+    """
     logging.info("--- Starting Job Re-scoring with Custom Resumes ---")
     rescore_start_time = time.time()
 
@@ -1042,15 +1055,6 @@ def rescore_jobs_with_custom_resume():
     logging.info(f"Processing {len(jobs_to_rescore)} jobs for re-scoring...")
     successful_rescores = 0
     failed_rescores = 0
-    rescored_this_run = []  # (job_id, breakdown) for the batch-relative gate below
-    # Jobs this phase lifts over the alert bar. The custom resume is written for
-    # a job precisely because it looked promising, so the rescore is where a job
-    # most often crosses the threshold — and for a long time that crossing sent
-    # no mail at all, because only the initial phase alerted. A job that was
-    # already above the bar was mailed at the initial stage and is deliberately
-    # not mailed twice: an alert that repeats is an alert nobody opens.
-    alert_threshold = config.EMAIL_ALERT_MIN_SCORE
-    newly_alertable = []
 
     for i, job in enumerate(jobs_to_rescore):
         job_id = job.get('job_id')
@@ -1085,49 +1089,20 @@ def rescore_jobs_with_custom_resume():
             logging.error(f"Failed to obtain custom resume text for job_id {job_id} from both DB and PDF. Skipping.")
             failed_rescores += 1
             if i < len(jobs_to_rescore) - 1:
-                logging.debug(f"Waiting {config.LLM_REQUEST_DELAY_SECONDS} seconds before next job...")
                 time.sleep(config.LLM_REQUEST_DELAY_SECONDS)
             continue
-        
-        logging.debug(f"Custom resume text for job {job_id} (first 200 chars): {custom_resume_text[:200]}")
+
         breakdown = get_resume_score_from_ai(custom_resume_text, job)
 
-        if breakdown is not None:
-            if supabase_utils.update_job_score(job_id, breakdown.overall_score, resume_score_stage="custom",
-                                               score_breakdown=breakdown.model_dump()):
-                successful_rescores += 1
-                rescored_this_run.append((job_id, breakdown))
-                previous_score = job.get("resume_score") or 0
-                if previous_score < alert_threshold <= breakdown.overall_score:
-                    # Held by reference: finalize_batch_recommendations mutates
-                    # the breakdown in place, so the mail must be built after it.
-                    newly_alertable.append({
-                        "job_id": job_id,
-                        "job_title": job.get("job_title"),
-                        "company": job.get("company"),
-                        "resume_score": breakdown.overall_score,
-                        "score_breakdown": breakdown,
-                    })
-            else:
-                failed_rescores += 1 
+        if breakdown is not None and supabase_utils.record_custom_cv_score(job_id, breakdown.overall_score):
+            successful_rescores += 1
+            logging.info(f"  Tailored-CV score {breakdown.overall_score} recorded beside the initial "
+                         f"score {job.get('resume_score')}; the initial score stands.")
         else:
-            failed_rescores += 1 
+            failed_rescores += 1
 
-        if i < len(jobs_to_rescore) - 1: 
-            logging.debug(f"Waiting {config.LLM_REQUEST_DELAY_SECONDS} seconds before next API call...")
+        if i < len(jobs_to_rescore) - 1:
             time.sleep(config.LLM_REQUEST_DELAY_SECONDS)
-
-    finalize_batch_recommendations(rescored_this_run, resume_score_stage="custom")
-
-    # Never fatal: the scores are already saved, so an unreachable mail server
-    # costs the alert and nothing else.
-    if newly_alertable:
-        # The rescore RPC does not return job_url, and the mail wants a link.
-        urls = supabase_utils.get_job_urls([e["job_id"] for e in newly_alertable])
-        for entry in newly_alertable:
-            entry["job_url"] = urls.get(entry["job_id"], "")
-            entry["score_breakdown"] = entry["score_breakdown"].model_dump()
-        notify.notify_matches(newly_alertable)
 
     rescore_end_time = time.time()
     logging.info("--- Job Re-scoring Finished ---")
@@ -1293,7 +1268,8 @@ def main(argv: list | None = None) -> int:
         logging.info(f"Total script execution time: {overall_end_time - overall_start_time:.2f} seconds")
         return exit_code
 
-    rescore_jobs_with_custom_resume() 
+    if getattr(config, "RESCORE_WITH_CUSTOM_RESUME", False):
+        rescore_jobs_with_custom_resume()
 
     # --- Phase 3: Manual Jobs from JSON file ---
     # Imported here (not at module top) to avoid a circular import with manual_jobs.

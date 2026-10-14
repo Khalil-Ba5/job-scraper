@@ -505,6 +505,28 @@ def update_job_score(job_id: str, score: int, resume_score_stage: str = "initial
         return False
 
 
+def record_custom_cv_score(job_id: str, custom_score: int) -> bool:
+    """Store a tailored CV's score in the breakdown, leaving resume_score alone.
+
+    Sets resume_score_stage to 'custom' so get_jobs_for_rescore does not pick
+    the job up again; resume_score and the rest of the breakdown keep the
+    initial, base-CV assessment that the queue and the alerts rank on.
+    """
+    try:
+        response = supabase.table(config.SUPABASE_TABLE_NAME)                           .select("score_breakdown")                           .eq("job_id", job_id)                           .limit(1)                           .execute()
+        rows = response.data or []
+        if not rows:
+            logging.warning(f"No job {job_id} to record a tailored-CV score on.")
+            return False
+        breakdown = dict(rows[0].get("score_breakdown") or {})
+        breakdown["custom_cv_score"] = custom_score
+        supabase.table(config.SUPABASE_TABLE_NAME)                .update({"resume_score_stage": "custom", "score_breakdown": breakdown})                .eq("job_id", job_id)                .execute()
+        return True
+    except Exception as e:
+        logging.error(f"Error recording tailored-CV score for job_id {job_id}: {e}")
+        return False
+
+
 def update_job_pitch(job_id: str, pitch: str) -> bool:
     """Saves the generated 'why me' pitch for a job. Non-fatal if the column doesn't exist yet."""
     if not job_id or not pitch:

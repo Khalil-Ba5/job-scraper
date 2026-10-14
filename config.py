@@ -217,6 +217,10 @@ SCRAPING_SOURCES = ["linkedin", "arbeitsagentur"]
 JOBS_TO_SCORE_PER_RUN = _int_env("JOBS_TO_SCORE_PER_RUN", 15)
 JOBS_TO_CUSTOMIZE_PER_RUN = 3
 RESUME_CUSTOMIZATION_MIN_SCORE = 55  # Only tailor resumes for strong matches; below this, effort is better spent elsewhere
+# Score each tailored CV as well. Off: the model scoring a CV it rewrote for that
+# posting measures echo, not fit, and the figure is only ever recorded beside the
+# real score (score_breakdown.custom_cv_score), never in place of it.
+RESCORE_WITH_CUSTOM_RESUME = _bool_env("RESCORE_WITH_CUSTOM_RESUME", False)
 
 # --- Apply-queue gating on interview odds ---
 # The recommendation downgrade is relative to the run, not absolute: an absolute
