@@ -65,9 +65,13 @@ LLM_MODEL = os.environ.get("LLM_MODEL") or "anthropic/claude-sonnet-4-6"
 # Only jobs that pass the screen get the full (expensive) scoring call.
 SCREENING_ENABLED = True
 LLM_SCREEN_MODEL = os.environ.get("LLM_SCREEN_MODEL") or "anthropic/claude-haiku-4-5"
-# Per-RUN, and the pipeline now runs four times a day — these are quartered from
-# their once-a-day values so the daily totals (and the LLM spend) stay put.
-JOBS_TO_SCREEN_PER_RUN = _int_env("JOBS_TO_SCREEN_PER_RUN", 40)
+# Per-RUN, and the pipeline runs four times a day. The screen cap is the
+# pipeline's throughput, not its spend: intake runs at about 100 jobs a day, and
+# at 40 a run (160 a day) any burst left a backlog that took weeks to drain — 764
+# rows in October 2026, some old enough for the 14-day cleanup to take them
+# unseen. At 100 a run the backlog clears within a day. Spend still tracks intake,
+# because a run only screens what is unscored.
+JOBS_TO_SCREEN_PER_RUN = _int_env("JOBS_TO_SCREEN_PER_RUN", 100)
 LLM_SCREEN_MAX_RPM = 30
 LLM_SCREEN_REQUEST_DELAY = 1
 
@@ -233,7 +237,9 @@ ONBOARDING_DRAFT_PATH = "onboarding_draft.json"
 SCRAPING_SOURCES = ["linkedin", "arbeitsagentur"]
 # Indeed was removed in Step A.0: every search came back 403/401 from GitHub-hosted
 # runners for at least twelve weeks, yielding zero jobs while the run stayed green.
-JOBS_TO_SCORE_PER_RUN = _int_env("JOBS_TO_SCORE_PER_RUN", 15)
+# About a quarter of screened jobs pass, so a full screen of 100 yields ~25. A
+# passer past this cap is not scored that run and is screened again the next.
+JOBS_TO_SCORE_PER_RUN = _int_env("JOBS_TO_SCORE_PER_RUN", 30)
 # Screened and scored only after every other source's unscored jobs. Nearly all
 # German-language, and German-language ads have produced no interview so far.
 SCORE_LAST_PROVIDERS = ["arbeitsagentur"]
