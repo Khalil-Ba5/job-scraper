@@ -95,3 +95,112 @@ class TestOffSpecModelOutput:
     def test_empty_draft_is_valid(self):
         empty = d.OnboardingDraft()
         assert empty.resume == models.Resume() and empty.questions == []
+
+
+import json
+
+import pytest
+
+import config
+
+
+class FakeClient:
+    def __init__(self, reply=None, error=None):
+        self.reply, self.error, self.calls = reply, error, []
+
+    def generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error:
+            raise self.error
+        return self.reply
+
+
+class TestOnboardingCall:
+    def test_one_call_on_the_onboarding_model(self, monkeypatch):
+        monkeypatch.setattr(config, "ONBOARDING_MODEL", "anthropic/claude-haiku-4-5")
+        client = FakeClient(make_draft().model_dump_json())
+        result = d.run_onboarding_call("CV TEXT", client=client, today_note="Today is 2026-10-15.")
+        assert len(client.calls) == 1
+        call = client.calls[0]
+        assert call["model_override"] == "anthropic/claude-haiku-4-5"
+        assert call["response_format"] is d.OnboardingDraft
+        assert "CV TEXT" in call["prompt"] and "Today is 2026-10-15." in call["prompt"]
+        assert "salary_expectation" in call["prompt"]  # the required-field list is in it
+        assert result.resume.name == "Alex Example"
+
+    def test_code_fences_are_tolerated(self):
+        raw = "```json\n" + make_draft().model_dump_json() + "\n```"
+        result = d.run_onboarding_call("x", client=FakeClient(raw), today_note="t")
+        assert result.location.city == "Munich"
+
+    def test_questions_are_capped(self):
+        many = [d.Question(id=str(i), field=f"f{i}", text="?") for i in range(20)]
+        raw = make_draft(questions=many).model_dump_json()
+        result = d.run_onboarding_call("x", client=FakeClient(raw), today_note="t")
+        assert len(result.questions) == d.MAX_QUESTIONS
+
+    @pytest.mark.parametrize("client", [FakeClient(""), FakeClient("not json"),
+                                        FakeClient(error=RuntimeError("429 rate limit"))])
+    def test_every_failure_is_one_readable_error(self, client):
+        with pytest.raises(d.OnboardingError):
+            d.run_onboarding_call("x", client=client, today_note="t")
+
+
+class TestDraftFile:
+    def test_round_trip(self, tmp_path):
+        path = str(tmp_path / "draft.json")
+        d.save_draft(make_draft(), path)
+        assert d.load_draft(path) == make_draft()
+
+    def test_missing_or_corrupt_is_none(self, tmp_path):
+        assert d.load_draft(str(tmp_path / "nope.json")) is None
+        bad = tmp_path / "bad.json"
+        bad.write_text("{", encoding="utf-8")
+        assert d.load_draft(str(bad)) is None
+
+
+class TestIngest:
+    @pytest.fixture
+    def stores(self, monkeypatch, tmp_path):
+        from db import supabase_utils
+        saved = {}
+        monkeypatch.setattr(config, "BASE_RESUME_PATH", str(tmp_path / "resume.json"))
+        monkeypatch.setattr(config, "ONBOARDING_DRAFT_PATH", str(tmp_path / "draft.json"))
+        monkeypatch.setattr(supabase_utils, "upload_base_resume_pdf",
+                            lambda data: saved.setdefault("pdf", data) is not None)
+        monkeypatch.setattr(supabase_utils, "save_base_resume",
+                            lambda data: saved.setdefault("resume", data) is not None)
+        monkeypatch.setattr(d, "extract_text", lambda data: "Alex Example, ML Engineer")
+        return saved, tmp_path
+
+    def test_reads_stores_and_keeps_the_draft(self, stores):
+        saved, tmp_path = stores
+        result = d.ingest_cv(b"%PDF", client=FakeClient(make_draft().model_dump_json()),
+                             today_note="t")
+        assert result.warnings == []
+        assert saved["pdf"] == b"%PDF"
+        assert saved["resume"]["email"] == "NA"  # normalised like resume_parser does
+        assert json.loads((tmp_path / "resume.json").read_text(encoding="utf-8"))["name"] == "Alex Example"
+        assert d.load_draft() == result.draft
+
+    def test_rereading_the_stored_cv_does_not_upload_it_again(self, stores):
+        saved, _ = stores
+        d.ingest_cv(b"%PDF", upload=False, client=FakeClient(make_draft().model_dump_json()),
+                    today_note="t")
+        assert "pdf" not in saved
+
+    def test_a_scanned_pdf_stops_before_any_call(self, stores, monkeypatch):
+        monkeypatch.setattr(d, "extract_text", lambda data: "  \n")
+        client = FakeClient(make_draft().model_dump_json())
+        with pytest.raises(d.OnboardingError, match="no text"):
+            d.ingest_cv(b"%PDF", client=client, today_note="t")
+        assert client.calls == []
+
+    def test_storage_failures_are_warnings_not_stops(self, stores, monkeypatch):
+        from db import supabase_utils
+        monkeypatch.setattr(supabase_utils, "upload_base_resume_pdf", lambda data: False)
+        monkeypatch.setattr(supabase_utils, "save_base_resume", lambda data: False)
+        result = d.ingest_cv(b"%PDF", client=FakeClient(make_draft().model_dump_json()),
+                             today_note="t")
+        assert len(result.warnings) == 2
+        assert result.draft.resume.name == "Alex Example"
