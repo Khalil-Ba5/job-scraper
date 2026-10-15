@@ -11,7 +11,7 @@ Run with: streamlit run ui_app.py
 """
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pandas as pd
 import streamlit as st
@@ -34,6 +34,10 @@ from tailor import settings as tailor_settings
 from tailor import store as tailor_store
 from tailor import documents as tailor_documents
 from db import supabase_utils
+from onboarding import build as onboarding_build
+from onboarding import draft as onboarding_draft
+from onboarding import questions as onboarding_questions
+from onboarding import status as onboarding_status
 
 STAGE_LABELS = {
     "applied": "Applied",
@@ -75,6 +79,7 @@ PAGES = [
     ("Every day", [("queue", "Jobs to apply"), ("tailor", "Write my CV")]),
     ("Every week", [("apps", "Where I applied")]),
     ("Every month", [("cal", "Is the score right?"), ("arch", "Which CV to use")]),
+    ("Once", [("setup", "Set up")]),
 ]
 DEFAULT_PAGE = "queue"
 
@@ -2312,6 +2317,238 @@ def render_generated_application(saved):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Set up
+# ═══════════════════════════════════════════════════════════════════════════
+
+LEDGER_LABELS = (
+    ("full_time_professional_months", "Full-time"),
+    ("working_student_months", "Working student"),
+    ("internship_months", "Internship"),
+    ("thesis_or_research_months", "Thesis / research"),
+)
+
+
+def setup_checks():
+    """The status strip: what is configured, and what to do about what is not."""
+    checks = onboarding_status.env_checks(os.environ, config.ONBOARDING_MODEL)
+    exists = supabase_utils.base_resume_exists() if checks[0].ok else None
+    checks.append(onboarding_status.Check(
+        "Database reachable", exists is not None,
+        "Check SUPABASE_URL, and run supabase_setup/init.sql in the Supabase SQL editor."))
+    checks.append(onboarding_status.Check("CV read", bool(exists), "Upload your CV below."))
+    checks.append(onboarding_status.Check(
+        "Profile saved", onboarding_status.profile_present(),
+        "Answer the questions below and press Save."))
+    return checks
+
+
+def render_setup_strip(checks):
+    chips = "".join(
+        T.chip(("✓ " if c.ok else "✗ ") + c.label,
+               T.BLUE[200] if c.ok else T.PURPLE[200], T.NEUTRAL[900])
+        for c in checks)
+    html(f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px">{chips}</div>')
+    for c in checks:
+        if not c.ok:
+            st.caption(f"{c.label}: {c.fix}")
+
+
+def current_draft():
+    """The draft in this session, else the one kept on disk from an earlier read."""
+    if "onb_draft" not in st.session_state:
+        st.session_state["onb_draft"] = onboarding_draft.load_draft()
+    return st.session_state["onb_draft"]
+
+
+def read_cv(data, upload):
+    """Run the one model call. On failure, open an empty form so setup can still finish."""
+    with st.spinner("Reading your CV — one call to the model, usually under half a minute…"):
+        try:
+            result = onboarding_draft.ingest_cv(data, upload=upload)
+            st.session_state["onb_draft"] = result.draft
+            st.session_state["onb_warnings"] = result.warnings
+        except onboarding_draft.OnboardingError as exc:
+            st.session_state["onb_draft"] = onboarding_draft.OnboardingDraft()
+            st.session_state["onb_warnings"] = [
+                f"{exc} The questions below can be answered by hand instead."]
+    st.session_state["onb_step"] = "questions"
+    st.session_state.pop("onb_answers", None)
+    st.rerun()
+
+
+def render_setup_upload(draft, can_call):
+    with st.container(border=True):
+        html(T.kicker("1 · Your CV", T.PURPLE[700]))
+        if draft is not None and draft.resume.name:
+            st.caption(f"Read from your CV: {draft.resume.name} · "
+                       f"{len(draft.resume.experience)} roles. Upload again to start over.")
+        pdf = st.file_uploader("Your CV as a PDF", type=["pdf"], key="onb_upload",
+                               disabled=not can_call)
+        cols = st.columns(2)
+        with cols[0]:
+            read = st.button("Read this CV", key="onb_read", type="primary", width="stretch",
+                             disabled=pdf is None or not can_call)
+        with cols[1]:
+            reread = st.button("Re-read my stored CV", key="onb_reread", width="stretch",
+                               disabled=not can_call,
+                               help="Reads the PDF you uploaded before. One cheap model call.")
+        if read:
+            read_cv(pdf.getvalue(), upload=True)
+        if reread:
+            stored = supabase_utils.download_resume_from_storage("resume.pdf")
+            if not stored:
+                st.error("No stored CV found — upload one above.")
+                return
+            read_cv(stored, upload=False)
+
+
+def question_widget(q, default):
+    key = f"onb_q_{q['id']}"
+    if q["type"] == "date":
+        try:
+            value = date.fromisoformat(default) if default else None
+        except ValueError:
+            value = None
+        picked = st.date_input(q["text"], value=value, key=key, format="YYYY-MM-DD")
+        return picked.isoformat() if picked else ""
+    if q["type"] == "yes_no":
+        options = ["yes", "no"]
+        index = options.index(default) if default in options else None
+        return st.radio(q["text"], options, index=index, key=key, horizontal=True) or ""
+    if q["type"] == "choice" and q.get("options"):
+        options = list(q["options"])
+        index = options.index(default) if default in options else None
+        return st.selectbox(q["text"], options, index=index, key=key,
+                            placeholder="Choose…") or ""
+    return st.text_input(q["text"], value=default, key=key).strip()
+
+
+def render_setup_questions(draft):
+    asked = [q.model_dump() for q in draft.questions]
+    qs = onboarding_questions.complete_question_set(
+        asked, onboarding_draft.code_questions(draft, date.today()))
+    answers = st.session_state.get("onb_answers") or {}
+    prefill = onboarding_build.prefill_from_existing(
+        onboarding_build.read_json(config.CANDIDATE_PROFILE_PATH),
+        onboarding_build.read_json(config.APPLICATION_ANSWERS_PATH))
+    about_cv = [q for q in qs
+                if q["field"].split(":")[0] in ("role_kind", "role_months", "language_level")]
+    about_you = [q for q in qs if q not in about_cv]
+
+    with st.form("onb_form"):
+        html(T.kicker("2 · A few questions", T.PURPLE[700]))
+        collected = {}
+        for title, group in (("About your CV", about_cv), ("About you", about_you)):
+            if not group:
+                continue
+            st.markdown(f"**{title}**")
+            for q in group:
+                default = answers.get(q["field"]) or prefill.get(q["field"]) or q.get("suggested") or ""
+                collected[q["field"]] = question_widget(q, default)
+        submitted = st.form_submit_button("Continue", type="primary")
+    if submitted:
+        missing = onboarding_questions.missing_fields(collected)
+        if missing:
+            st.error("Still needed: " + "; ".join(
+                onboarding_questions.FIELD_BY_KEY[key].meaning for key in missing))
+            return
+        st.session_state["onb_answers"] = collected
+        st.session_state["onb_step"] = "review"
+        st.rerun()
+
+
+def render_setup_review(draft):
+    answers = st.session_state["onb_answers"]
+    kinds, months = onboarding_draft.answer_overrides(answers)
+    ledger, _ = onboarding_draft.experience_ledger(draft.resume, draft.roles, date.today(),
+                                                   kinds, months)
+    with st.container(border=True):
+        html(T.kicker("3 · Check and save", T.PURPLE[700]))
+        st.caption("Months of experience, counted from the dates on your CV.")
+        cols = st.columns(len(LEDGER_LABELS))
+        for col, (key, label) in zip(cols, LEDGER_LABELS):
+            with col:
+                ledger[key] = int(st.number_input(label, min_value=0, value=int(ledger[key]),
+                                                  step=1, key=f"onb_ledger_{key}"))
+        short = st.text_area("Short profile — the scorer reads this first",
+                             value=draft.short_profile, key="onb_short")
+        rows = pd.DataFrame([{"skill": s.skill, "tier": s.tier} for s in draft.skills],
+                            columns=["skill", "tier"])
+        edited = st.data_editor(
+            rows, key="onb_skills", num_rows="dynamic", width="stretch",
+            column_config={"tier": st.column_config.NumberColumn(
+                "tier", min_value=1, max_value=5, step=1,
+                help="1 shipped with a metric · 2 built, on the CV · 3 project or coursework · "
+                     "4 true but not on the CV · 5 not done")})
+        skills = [onboarding_draft.SkillTier(skill=str(r["skill"]).strip(),
+                                             tier=r["tier"] if pd.notna(r["tier"]) else 2)
+                  for r in edited.to_dict("records")
+                  if pd.notna(r.get("skill")) and str(r["skill"]).strip()]
+        final = draft.model_copy(update={"short_profile": short, "skills": skills})
+        profile = onboarding_build.build_profile(final, answers, ledger)
+        app_answers = onboarding_build.build_answers(
+            answers, final, onboarding_build.read_json(config.APPLICATION_ANSWERS_PATH))
+        with st.expander("Preview the two files"):
+            st.json(profile)
+            st.json(app_answers)
+        back, save = st.columns(2)
+        with back:
+            if st.button("← Change answers", key="onb_back", width="stretch"):
+                st.session_state["onb_step"] = "questions"
+                st.rerun()
+        with save:
+            if st.button("Save", key="onb_save", type="primary", width="stretch"):
+                try:
+                    onboarding_build.save_files(profile, app_answers)
+                except (ValueError, OSError) as exc:
+                    st.error(f"Nothing was saved: {exc}")
+                    return
+                st.session_state["onb_saved_profile"] = profile
+                st.session_state["onb_step"] = "done"
+                st.rerun()
+
+
+def render_setup_done():
+    st.success("Saved candidate_profile.json and application_answers.json. "
+               "The next scoring run uses them.")
+    profile = st.session_state.get("onb_saved_profile")
+    if profile:
+        html(T.kicker("For the scheduled runs on GitHub", T.PURPLE[700]))
+        st.caption("GitHub → Settings → Secrets and variables → Actions → New repository "
+                   "secret. Name: CANDIDATE_PROFILE_JSON. Value:")
+        st.code(onboarding_build.secret_line(profile), language=None, wrap_lines=True)
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button("Go to the jobs", key="onb_to_queue", type="primary", width="stretch"):
+            go("queue")
+            st.rerun()
+    with cols[1]:
+        if st.button("Change answers", key="onb_again", width="stretch"):
+            st.session_state["onb_step"] = "questions"
+            st.rerun()
+
+
+def render_setup_page():
+    html(T.page_header("Set up", "Upload your CV and answer a few questions. One cheap "
+                                 "model call reads the CV; the rest comes from your answers."))
+    for warning in st.session_state.pop("onb_warnings", []):
+        st.warning(warning)
+    checks = setup_checks()
+    render_setup_strip(checks)
+    draft = current_draft()
+    render_setup_upload(draft, can_call=checks[0].ok and checks[1].ok)
+    if draft is None:
+        return
+    step = st.session_state.get("onb_step", "questions")
+    if step == "review" and st.session_state.get("onb_answers"):
+        render_setup_review(draft)
+    elif step == "done":
+        render_setup_done()
+    else:
+        render_setup_questions(draft)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 def main():
     html(T.CSS)
@@ -2328,7 +2565,9 @@ def main():
         st.toast(failure, icon="❌")
         st.error(failure)
 
-    st.session_state.setdefault("page", DEFAULT_PAGE)
+    # A first run has nothing to score against, so it opens where that is fixed.
+    st.session_state.setdefault(
+        "page", DEFAULT_PAGE if onboarding_status.profile_present() else "setup")
     # Every page, every run - see init_filters for why it cannot live on the
     # queue page alone.
     init_filters()
@@ -2343,6 +2582,8 @@ def main():
         render_calibration_page()
     elif page == "arch":
         render_archetypes_page()
+    elif page == "setup":
+        render_setup_page()
     else:
         render_generate_cv_page()
 
