@@ -65,6 +65,8 @@ class TestUnscoredJobsCarryTheirScrapeDate:
                             type("C", (), {"table": lambda self, name: FakeQuery()})())
         rows = supabase_utils.get_jobs_to_score(10)
         assert "scraped_at" in selected["columns"]
+        # The email alert links each job; without job_url it had no link to draw.
+        assert "job_url" in selected["columns"]
         assert dashboard.found_today(rows[0]) is True
 
 

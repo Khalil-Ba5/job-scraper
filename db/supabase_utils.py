@@ -182,7 +182,9 @@ def get_jobs_to_score(limit: int) -> list:
         # filters these rows to "found today", and without the column that test
         # failed for every row — so the Unscored table was structurally always
         # empty and the stat above it always read 0.
-        base_cols = "job_id, job_title, company, description, level, scraped_at"
+        # job_url rides along for the email alert, which links each job it names;
+        # without it every alert went out with no link at all.
+        base_cols = "job_id, job_title, company, description, level, scraped_at, job_url"
 
         def _fetch(n: int, deprioritised: bool) -> list:
             try:
