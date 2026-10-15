@@ -23,8 +23,8 @@ queue: read the verdict, open the posting, mark applied or skip with a reason.
 
 ## Quick start
 
-You need Python 3.11+, a [Supabase](https://supabase.com) project (the free tier
-is enough) and an API key for one LLM provider (Anthropic by default). Run every
+About 15 minutes. You need Python 3.11+, a free [Supabase](https://supabase.com)
+project and an API key for one LLM provider (Anthropic by default). Run every
 command from the repository root.
 
 **1. Install**
@@ -33,54 +33,50 @@ command from the repository root.
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+cp .env.example .env               # Windows: copy .env.example .env
 ```
 
-**2. Add your credentials**
+**2. Fill in `.env`**
 
-```bash
-cp .env.example .env
-```
-
-Fill in `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and your LLM key.
-Using a provider other than Anthropic? See
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (Supabase → Project Settings →
+API), plus your LLM key. Another provider than Anthropic? See
 [Switching LLM provider](docs/configuration.md#switching-llm-provider).
 
 **3. Create the database**
 
-In the Supabase SQL editor, run `supabase_setup/init.sql`, then each
-`supabase_setup/add_*.sql` migration and `raise_customization_threshold.sql`.
-The order and what each one does are in
-[Database](docs/configuration.md#database-supabase).
+In the Supabase SQL editor, run `supabase_setup/init.sql`, then every other file
+in `supabase_setup/` in the order listed under
+[Database](docs/configuration.md#database-supabase). All are safe to re-run.
 
-**4. Set up your profile in the app**
+**4. Choose what to search for** *(optional)*
+
+The defaults search for data / ML / AI roles in Germany. To change that, edit the
+search queries and location in [`config.py`](config.py), section 2.
+
+**5. Set up your profile**
 
 ```bash
 streamlit run ui_app.py
 ```
 
-The app opens on **Set up**. Upload your CV as a PDF; one cheap model call reads
-it and writes questions about what it cannot tell (start date, permit, salary…),
-with suggested answers filled in. Check the answers, press **Save**, and
-`candidate_profile.json` and `application_answers.json` are written for you. The
-page also gives you the line to paste into the `CANDIDATE_PROFILE_JSON` GitHub
-secret. Re-open **Set up** at any time to change an answer — that costs nothing.
+The app opens on **Set up**. Its status strip shows what is still missing, and
+each red item says how to fix it. Then upload your CV, answer the questions
+(most are pre-filled from it) and press **Save**. That costs one cheap model
+call; changing an answer later costs nothing.
 
-**5. Choose what to search for**
-
-Edit the search queries and location in [`config.py`](config.py)
-(section 2, *User preferences*). The defaults search for data / ML / AI roles in
-Germany.
-
-**6. Run it**
+**6. Find and score jobs**
 
 ```bash
 python -m sources.scraper          # find jobs   (--source linkedin | arbeitsagentur)
 python -m scoring.score_jobs       # screen + score
-streamlit run ui_app.py            # work the queue
 ```
 
-To run it unattended four times a day, push the repository to GitHub and add your
-secrets: see [GitHub Actions](docs/configuration.md#github-actions).
+Back in the app, **Jobs to apply** now has your queue.
+
+To run this unattended four times a day, push the repository to GitHub, add your
+`.env` values as secrets, and paste the line the **Set up** page gives you into
+the `CANDIDATE_PROFILE_JSON` secret: see
+[GitHub Actions](docs/configuration.md#github-actions).
 
 ---
 
