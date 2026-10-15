@@ -52,33 +52,26 @@ In the Supabase SQL editor, run `supabase_setup/init.sql`, then each
 The order and what each one does are in
 [Database](docs/configuration.md#database-supabase).
 
-**4. Add your CV**
-
-Upload your CV as a PDF to the `resumes` bucket in Supabase Storage, then:
+**4. Set up your profile in the app**
 
 ```bash
-python -m resume.resume_parser
+streamlit run ui_app.py
 ```
 
-**5. Describe yourself**
+The app opens on **Set up**. Upload your CV as a PDF; one cheap model call reads
+it and writes questions about what it cannot tell (start date, permit, salary…),
+with suggested answers filled in. Check the answers, press **Save**, and
+`candidate_profile.json` and `application_answers.json` are written for you. The
+page also gives you the line to paste into the `CANDIDATE_PROFILE_JSON` GitHub
+secret. Re-open **Set up** at any time to change an answer — that costs nothing.
 
-```bash
-cp candidate_profile.json.example candidate_profile.json
-cp application_answers.json.example application_answers.json
-```
-
-Fill in both. The profile holds what your CV does not say (start date, work
-permit, experience by kind) and the scorer will not run without it. The answers
-fill the application packs. Both are gitignored. See
-[Your personal files](docs/configuration.md#your-personal-files).
-
-**6. Choose what to search for**
+**5. Choose what to search for**
 
 Edit the search queries and location in [`config.py`](config.py)
 (section 2, *User preferences*). The defaults search for data / ML / AI roles in
 Germany.
 
-**7. Run it**
+**6. Run it**
 
 ```bash
 python -m sources.scraper          # find jobs   (--source linkedin | arbeitsagentur)

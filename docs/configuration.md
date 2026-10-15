@@ -14,6 +14,7 @@ first and come back here for details.
 | Answers German application forms ask for | `application_answers.json` | No — gitignored |
 | Jobs you found yourself | `manual_jobs.json` | No — optional |
 | Facts about you for the CV tailor | `profile_facts.json` | No — gitignored, built by the app |
+| The Set up page's last CV read | `onboarding_draft.json` | No — gitignored |
 | Your pre-made CV files | `cv/` | No — gitignored |
 | The same secrets, for the scheduled runs | GitHub repository secrets and variables | — |
 
@@ -44,6 +45,7 @@ provider variable when its format matches the model's provider.
 |---|---|---|
 | `LLM_MODEL` | `anthropic/claude-sonnet-4-6` | Model for full scoring and CV tailoring |
 | `LLM_SCREEN_MODEL` | `anthropic/claude-haiku-4-5` | Cheap model for the screening pass |
+| `ONBOARDING_MODEL` | `LLM_SCREEN_MODEL` | Model for the Set up page's single CV read. Set it to `LLM_MODEL`'s value if the parsed CV comes back thin |
 | `LLM_DEBUG` | off | Verbose LLM logging |
 | `CANDIDATE_PROFILE_JSON` | unset | The whole candidate profile as a JSON string. Used instead of `candidate_profile.json` when set — this is how CI gets it |
 | `TAILOR_FACTS_JSON` | unset | The fact base as a JSON string, for CI. Unset, jobs are scored against the CV alone |
@@ -67,6 +69,10 @@ tailoring and clustering packages have their own, listed in
 ---
 
 ## Your personal files
+
+The **Set up** page in the app writes `candidate_profile.json` and
+`application_answers.json` for you from your CV and a few answers, and keeps the
+previous versions as `.bak`. The manual route below still works.
 
 Each has a committed `.example` next to it. Copy it and fill it in:
 
@@ -144,7 +150,8 @@ The file is split into three sections:
    | `add_program_type.sql` | Graduate / trainee programme tag |
    | `raise_customization_threshold.sql` | Tailoring picks only jobs scored 70+ at the database level |
 
-4. Upload your CV as a PDF to the `resumes` storage bucket, then parse it:
+4. Upload your CV on the app's **Set up** page — it stores and parses it. To do it
+   by hand instead, upload the PDF to the `resumes` storage bucket as `resume.pdf`, then:
 
    ```bash
    python -m resume.resume_parser
