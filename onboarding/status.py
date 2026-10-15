@@ -40,7 +40,7 @@ def env_checks(env: Mapping[str, str], model: str) -> List[Check]:
     key_name = provider_key_name(model)
     key_ok = (key_name is not None and _set(env, key_name)) or _set(env, "LLM_API_KEY")
     key_fix = (f"Set {key_name} in .env" if key_name
-               else f"Set the API key for '{model}' in .env (see docs/configuration.md)")
+               else f"Set the API key for '{model}' in .env (see README.md, Configuration)")
     return [
         Check("Supabase settings", supabase_ok,
               "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env, then restart the app."),

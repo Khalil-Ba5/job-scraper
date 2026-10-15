@@ -16,8 +16,7 @@ Arbeitsagentur              + rough band                               if 70+
 Everything lands in Supabase. You then open the Streamlit app and work the
 queue: read the verdict, open the posting, mark applied or skip with a reason.
 
-**Docs:** [Features](docs/features.md) · [Configuration](docs/configuration.md) ·
-[CV tailoring](tailor/README.md) · [CV archetypes](clustering/README.md)
+**More:** [Configuration](#configuration) · [CV tailoring](tailor/README.md) · [CV archetypes](clustering/README.md)
 
 ---
 
@@ -40,13 +39,13 @@ cp .env.example .env               # Windows: copy .env.example .env
 
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (Supabase → Project Settings →
 API), plus your LLM key. Another provider than Anthropic? See
-[Switching LLM provider](docs/configuration.md#switching-llm-provider).
+[Switching LLM provider](#switching-llm-provider).
 
 **3. Create the database**
 
 In the Supabase SQL editor, run `supabase_setup/init.sql`, then every other file
 in `supabase_setup/` in the order listed under
-[Database](docs/configuration.md#database-supabase). All are safe to re-run.
+[Database](#database). All are safe to re-run.
 
 **4. Choose what to search for** *(optional)*
 
@@ -76,7 +75,127 @@ Back in the app, **Jobs to apply** now has your queue.
 To run this unattended four times a day, push the repository to GitHub, add your
 `.env` values as secrets, and paste the line the **Set up** page gives you into
 the `CANDIDATE_PROFILE_JSON` secret: see
-[GitHub Actions](docs/configuration.md#github-actions).
+[GitHub Actions](#github-actions).
+
+---
+
+## Configuration
+
+Secrets go in `.env` (copied from `.env.example`, which lists every variable).
+Search queries, caps and thresholds go in [`config.py`](config.py): section 2,
+*User preferences*, is the part meant to be edited; section 3 is calibrated to
+avoid being blocked. Your profile and form answers are written by the app's
+**Set up** page.
+
+### Database
+
+Run `supabase_setup/init.sql` first, then these, in this order. All are
+idempotent: re-running one is always safe, and it is the fix if a column is
+reported missing.
+
+| Migration | Adds |
+|---|---|
+| `add_score_breakdown.sql` | Full LLM breakdown alongside the numeric score |
+| `add_why_me_pitch.sql` | Pitch column (no longer generated; older rows still have it) |
+| `add_application_outcomes.sql` | Interview / rejection / offer tracking |
+| `add_dismissal.sql` | Skip, with a reason |
+| `add_deleted_jobs.sql` | Hard delete, with a tombstone so a job stays deleted |
+| `add_alt_sources.sql` | Cross-source dedup |
+| `add_program_type.sql` | Graduate / trainee programme tag |
+| `raise_customization_threshold.sql` | Tailoring picks only jobs scored 70+ at the database level |
+
+### Switching LLM provider
+
+Any model [LiteLLM supports](https://docs.litellm.ai/docs/providers) works. Set the
+provider's key and both models, for example in `.env`:
+
+```
+OPENAI_API_KEY=sk-...
+LLM_MODEL=openai/gpt-4o
+LLM_SCREEN_MODEL=openai/gpt-4o-mini
+```
+
+On GitHub Actions the workflows pass `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GROQ_API_KEY` and `LLM_API_KEY` through; to change models there, edit the
+defaults in `config.py`. The CV tailor's judge model is set separately
+(`TAILOR_JUDGE_MODEL`).
+
+### Email alerts
+
+Off by default. When enabled, the scoring run sends one mail at the end listing
+the jobs *that run* scored at or above `EMAIL_ALERT_MIN_SCORE` (default 70).
+English-language ads have a lower bar, `EMAIL_ALERT_MIN_SCORE_ENGLISH` (default
+55, never above the general one), because both interviews so far came from
+English ads scored 58. Below the general bar a job recommended *skip* is never
+mailed. Set the English value equal to the general one to turn the lower bar
+off. A run with nothing above the bar sends nothing. A job is scored once, so no
+job is ever alerted twice, and an unreachable mail server is logged rather than
+failing the run.
+
+Any SMTP provider works. For Gmail, turn on 2-Step Verification and create an
+[App Password](https://myaccount.google.com/apppasswords) — the account password
+is always refused.
+
+```
+EMAIL_ALERTS_ENABLED=true
+EMAIL_ALERT_MIN_SCORE=70
+EMAIL_ALERT_MIN_SCORE_ENGLISH=55   # English-language ads; set to 70 to turn off
+EMAIL_ALERT_MAX_JOBS=10            # jobs listed in full before falling back to a count
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587                      # 465 for implicit TLS; anything else uses STARTTLS
+SMTP_USER=you@gmail.com
+SMTP_PASSWORD=your_app_password
+EMAIL_FROM=you@gmail.com           # defaults to SMTP_USER
+EMAIL_TO=you@gmail.com             # comma-separated for several recipients
+```
+
+Check it before trusting a scheduled run:
+
+```bash
+python -m scoring.notify --test
+```
+
+### GitHub Actions
+
+The scheduled pipeline runs on GitHub Actions. Fork or push the repository, enable
+Actions, and add the values below under **Settings → Secrets and variables → Actions**.
+`run_all.yml` then runs the whole pipeline four times a day.
+
+Secrets:
+
+| Secret | Required | Notes |
+|---|---|---|
+| `SUPABASE_URL` | Yes | |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | |
+| `ANTHROPIC_API_KEY` | For the default models | Or `OPENAI_API_KEY`, `GROQ_API_KEY`, `LLM_API_KEY`, `GEMINI_FIRST_API_KEY` |
+| `CANDIDATE_PROFILE_JSON` | Yes | The full contents of your `candidate_profile.json` |
+| `TAILOR_FACTS_JSON` | No | The full contents of `profile_facts.json` |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, `EMAIL_TO` | For email alerts | |
+
+Variables (not secret; all optional):
+
+| Variable | Notes |
+|---|---|
+| `EMAIL_ALERTS_ENABLED` | `true` to turn on alerts |
+| `EMAIL_ALERT_MIN_SCORE`, `EMAIL_ALERT_MIN_SCORE_ENGLISH` | Alert thresholds |
+| `PURGE_MIN_SCORE`, `PURGE_LIMIT` | Housekeeping limits |
+
+Workflows:
+
+| Workflow | What it does |
+|---|---|
+| `run_all.yml` | The whole pipeline, 4×/day: scrape (one runner per source, in parallel) → score → housekeeping → dashboard |
+| `scrape_jobs.yml` / `score_jobs.yml` / `job_manager.yml` | The individual stages, for running one by hand |
+| `parse_resume.yml` | Re-parse your CV after you upload a new one |
+| `backfill.yml` | Widen the date window for one source to catch up |
+| `rescore_existing.yml` / `rescore_degraded.yml` | Re-score stored jobs after a scorer change |
+| `dashboard.yml` | Rebuild the static dashboard |
+
+Runs never overlap, and a failed scrape leg does not stop scoring — whatever
+landed still deserves to be looked at.
+
+> **This repository may be public.** Never commit `.env`, your personal JSON files,
+> `cv/`, `output/` or `dashboard.html`. All are in `.gitignore`; keep them there.
 
 ---
 
@@ -120,7 +239,6 @@ ui_app.py          the Streamlit entry point, so `streamlit run ui_app.py` needs
 
 *.json.example     templates for your personal files (copy without .example; the copies are gitignored)
 .env.example       template for your credentials
-docs/              features tour and the full configuration reference
 
 sources/           where jobs come from
     scraper.py         LinkedIn + the per-source runners behind `--source`

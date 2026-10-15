@@ -2,7 +2,7 @@
 
 Secrets never go here: this file is committed. They go in .env (see .env.example).
 Every setting below, and every environment variable that overrides one, is
-explained in docs/configuration.md.
+explained in the Configuration section of README.md.
 """
 
 import os
