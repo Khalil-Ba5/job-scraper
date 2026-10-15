@@ -146,10 +146,24 @@ def parse_month(value, today: date, end: bool = False) -> Optional[date]:
 def role_months(experience: models.Experience, today: date) -> Optional[int]:
     """Whole months in a role, both ends inclusive, or None if its dates cannot be read."""
     start = parse_month(experience.start_date, today)
+    if start is not None and start > date(today.year, today.month, 1):
+        return 0  # signed but not started: no experience yet, and nothing to ask
     end = parse_month(experience.end_date, today, end=True)
     if start is None or end is None or end < start:
         return None
     return (end.year - start.year) * 12 + end.month - start.month + 1
+
+
+def _months_from_text(text: str) -> Optional[int]:
+    """'14', '18 months', '2 years', '1,5 Jahre' -> months."""
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*([a-zäöü]*)", text.lower())
+    if not match:
+        return None
+    value = float(match.group(1).replace(",", "."))
+    unit = match.group(2)
+    if unit.startswith(("year", "yr", "jahr")) or unit in ("y", "j"):
+        value *= 12
+    return int(round(value))
 
 
 def answer_overrides(answers: Mapping[str, str]) -> Tuple[Dict[int, str], Dict[int, int]]:
@@ -167,9 +181,9 @@ def answer_overrides(answers: Mapping[str, str]) -> Tuple[Dict[int, str], Dict[i
             if kind in ROLE_KINDS:
                 kinds[int(index)] = kind
         elif name == "role_months":
-            digits = re.search(r"\d+", text)
-            if digits:
-                months[int(index)] = int(digits.group())
+            n = _months_from_text(text)
+            if n is not None:
+                months[int(index)] = n
     return kinds, months
 
 

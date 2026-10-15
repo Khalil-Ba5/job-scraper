@@ -142,3 +142,54 @@ class TestReviewFixes:
         build.save_files(profile(), {"x": 1}, str(pp), str(ap))
         build.save_files(profile(), {"x": 2}, str(pp), str(ap))
         assert json.loads((tmp_path / "p.json.bak").read_text(encoding="utf-8")) == {"hand": "written"}
+
+
+class TestDeferredFixes:
+    def test_example_remote_line_is_not_an_answer(self):
+        pre = build.prefill_from_existing(build.read_json(EXAMPLE), None)
+        assert "remote_ok" not in pre
+
+    def test_remote_answer_round_trips(self):
+        for answer in ("yes", "no"):
+            p = profile(dict(ANSWERS, remote_ok=answer))
+            assert build.prefill_from_existing(p, None)["remote_ok"] == answer
+
+    def test_language_answer_matches_regardless_of_case(self):
+        answers = dict(ANSWERS)
+        answers.pop("language_level:German")
+        answers["language_level:german"] = "B2"
+        assert "- German: B2" in profile(answers)["profile_v2"]
+
+    def test_a_failed_second_write_leaves_the_first_file_alone(self, tmp_path):
+        pp = tmp_path / "p.json"
+        pp.write_text('{"old": true}', encoding="utf-8")
+        with pytest.raises(OSError):
+            build.save_files(profile(), {"x": 1}, str(pp), str(tmp_path / "missing" / "a.json"))
+        assert json.loads(pp.read_text(encoding="utf-8")) == {"old": True}
+        assert not list(tmp_path.glob("*.tmp"))
+
+    def test_unserialisable_answers_write_nothing(self, tmp_path):
+        with pytest.raises((TypeError, ValueError)):
+            build.save_files(profile(), {"x": {1, 2}}, str(tmp_path / "p.json"), str(tmp_path / "a.json"))
+        assert list(tmp_path.iterdir()) == []
+
+    def test_profile_notes_are_rendered_not_raw(self):
+        p = profile(dict(ANSWERS, permit_status="Fiktionsbescheinigung {pending}"))
+        notes = build.profile_notes(p)
+        assert "Fiktionsbescheinigung {pending}" in notes and "{{" not in notes
+        assert "- Full-time professional: 34 months" in notes
+        assert notes.startswith(p["short_profile"])
+
+    def test_profile_notes_tolerate_a_broken_template(self):
+        notes = build.profile_notes({"short_profile": "s", "profile_v2": "a {oops} b {{x}}"})
+        assert "{oops}" in notes and "{x}" in notes
+
+    def test_draft_from_an_existing_profile_keeps_what_it_says(self):
+        p = profile()
+        draft = build.draft_from_existing(p)
+        assert draft.short_profile == p["short_profile"]
+        assert [(l.language, l.level) for l in draft.languages] == [("English", "C1"), ("German", "B1")]
+        assert (draft.location.city, draft.location.country) == ("Munich", "Germany")
+        assert [(s.skill, s.tier) for s in draft.skills] == [("PyTorch", 1), ("Kubernetes", 3)]
+        assert build.prefill_from_existing(p, None)["extra_skills"] == "Airflow, dbt"
+        assert build.existing_ledger(p) == LEDGER

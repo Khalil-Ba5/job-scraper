@@ -2328,10 +2328,16 @@ LEDGER_LABELS = (
 )
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_base_resume_exists():
+    # A network call; the Set up page reruns on every keystroke in the review step.
+    return supabase_utils.base_resume_exists()
+
+
 def setup_checks():
     """The status strip: what is configured, and what to do about what is not."""
     checks = onboarding_status.env_checks(os.environ, config.ONBOARDING_MODEL)
-    exists = supabase_utils.base_resume_exists() if checks[0].ok else None
+    exists = _cached_base_resume_exists() if checks[0].ok else None
     checks.append(onboarding_status.Check(
         "Database reachable", exists is not None,
         "Check SUPABASE_URL, and run supabase_setup/init.sql in the Supabase SQL editor."))
@@ -2354,9 +2360,15 @@ def render_setup_strip(checks):
 
 
 def current_draft():
-    """The draft in this session, else the one kept on disk from an earlier read."""
+    """The draft in this session, else the one kept on disk from an earlier read,
+    else one rebuilt from a saved profile — so editing never needs a paid re-read."""
     if "onb_draft" not in st.session_state:
-        st.session_state["onb_draft"] = onboarding_draft.load_draft()
+        draft = onboarding_draft.load_draft()
+        saved = onboarding_build.read_json(config.CANDIDATE_PROFILE_PATH)
+        if draft is None and saved and onboarding_status.profile_present(
+                config.CANDIDATE_PROFILE_PATH, env={}):
+            draft = onboarding_build.draft_from_existing(saved)
+        st.session_state["onb_draft"] = draft
     return st.session_state["onb_draft"]
 
 
@@ -2365,6 +2377,7 @@ def read_cv(data, upload):
     with st.spinner("Reading your CV — one call to the model, usually under half a minute…"):
         try:
             result = onboarding_draft.ingest_cv(data, upload=upload)
+            _cached_base_resume_exists.clear()
             st.session_state["onb_draft"] = result.draft
             st.session_state["onb_warnings"] = result.warnings
         except onboarding_draft.OnboardingError as exc:
@@ -2382,6 +2395,9 @@ def render_setup_upload(draft, can_call):
         if draft is not None and draft.resume.name:
             st.caption(f"Read from your CV: {draft.resume.name} · "
                        f"{len(draft.resume.experience)} roles. Upload again to start over.")
+        elif draft is not None:
+            st.caption("The answers below come from your saved profile. Upload your CV "
+                       "to have it read again.")
         pdf = st.file_uploader("Your CV as a PDF", type=["pdf"], key="onb_upload",
                                disabled=not can_call)
         cols = st.columns(2)
@@ -2467,6 +2483,11 @@ def render_setup_review(draft):
     kinds, months = onboarding_draft.answer_overrides(answers)
     ledger, _ = onboarding_draft.experience_ledger(draft.resume, draft.roles, date.today(),
                                                    kinds, months)
+    if not draft.resume.experience:
+        # Rebuilt from a saved profile: there are no roles to count, so start from
+        # the months that profile already records instead of zero.
+        ledger = onboarding_build.existing_ledger(
+            onboarding_build.read_json(config.CANDIDATE_PROFILE_PATH)) or ledger
     with st.container(border=True):
         html(T.kicker("3 · Check and save", T.PURPLE[700]))
         st.caption("Months of experience, counted from the dates on your CV.")
@@ -2541,7 +2562,7 @@ def render_setup_page():
     checks = setup_checks()
     render_setup_strip(checks)
     draft = current_draft()
-    render_setup_upload(draft, can_call=checks[0].ok and checks[1].ok)
+    render_setup_upload(draft, can_call=all(c.ok for c in checks[:3]))
     if draft is None:
         return
     step = st.session_state.get("onb_step", "questions")

@@ -946,3 +946,28 @@ class TestSetupPage:
             Question(id="q", field="notice_period", text="Notice?")])
         setup_app.run()
         assert not setup_app.exception
+
+    def test_no_model_call_while_the_database_is_unreachable(self, setup_app, monkeypatch):
+        monkeypatch.setattr(supabase_utils, "base_resume_exists", lambda: None)
+        setup_app.run()
+        assert not setup_app.exception
+        assert setup_app.button("onb_reread").disabled
+
+    def test_database_is_checked_once_not_on_every_rerun(self, setup_app, monkeypatch):
+        calls = []
+        monkeypatch.setattr(supabase_utils, "base_resume_exists", lambda: calls.append(1) or True)
+        setup_app.run()
+        setup_app.run()
+        assert len(calls) == 1
+
+    def test_a_saved_profile_opens_on_the_questions_without_a_read(self, setup_app, tmp_path):
+        import json
+        from onboarding import build
+        from tests.onboarding_samples import ANSWERS, LEDGER, make_draft
+        (tmp_path / "profile.json").write_text(
+            json.dumps(build.build_profile(make_draft(), ANSWERS, LEDGER)), encoding="utf-8")
+        setup_app.run()
+        assert not setup_app.exception
+        values = {w.label: w.value for w in setup_app.text_input}
+        assert values["What is your residence or work permit status (or citizenship), and does an "
+                      "employer need to do anything?"] == "Blue Card holder"

@@ -13,10 +13,10 @@ import os
 import re
 import shutil
 from datetime import date
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import config
-from onboarding.draft import LEDGER_KEYS, OnboardingDraft
+from onboarding.draft import LEDGER_KEYS, LanguageLevel, OnboardingDraft, Place, SkillTier
 
 TIER_LEGEND = (
     "tier_1 = shipped in production with a metric, on the CV | tier_2 = built and working, "
@@ -68,14 +68,16 @@ def build_profile(draft: OnboardingDraft, answers: Mapping[str, str],
         "{effective_fte_years}",
         "", "### Languages",
     ]
-    languages = [(lang.language, a.get(f"language_level:{lang.language}") or lang.level
+    level_answers = {key.split(":", 1)[1].strip().lower(): value for key, value in a.items()
+                     if key.startswith("language_level:") and value}
+    languages = [(lang.language, level_answers.get(lang.language.strip().lower()) or lang.level
                   or "level not stated") for lang in draft.languages]
     lines += [f"- {esc(name)}: {esc(level)}" for name, level in languages] or ["- not stated"]
     lines += [
         "", "### Location",
         f"- Base: {esc(_place(draft) or 'not stated')}",
         f"- Willing to relocate to: {esc(a.get('relocation'))}",
-        "- Remote OK" if _yes(a.get("remote_ok")) else "- Remote: no, on-site or hybrid only",
+        "- Remote OK: yes" if _yes(a.get("remote_ok")) else "- Remote OK: no, on-site or hybrid only",
         "", "### Evidence index (what can actually be pointed at, not just plausibly claimed)",
         TIER_LEGEND,
     ]
@@ -131,16 +133,30 @@ def save_files(profile: Dict[str, Any], app_answers: Dict[str, Any],
                profile_path: Optional[str] = None, answers_path: Optional[str] = None) -> None:
     """Validate, back up what is there, then write both files."""
     validate_profile(profile)
-    targets = ((profile_path or config.CANDIDATE_PROFILE_PATH, profile),
-               (answers_path or config.APPLICATION_ANSWERS_PATH, app_answers))
+    # Serialise both, write both to temporary files, and only then swap them in:
+    # a failure anywhere before the swap leaves both originals untouched, so the
+    # profile and the answers never end up from two different saves.
+    targets = [(profile_path or config.CANDIDATE_PROFILE_PATH,
+                json.dumps(profile, indent=2, ensure_ascii=False)),
+               (answers_path or config.APPLICATION_ANSWERS_PATH,
+                json.dumps(app_answers, indent=2, ensure_ascii=False))]
+    written = []
+    try:
+        for path, text in targets:
+            with open(path + ".tmp", "w", encoding="utf-8") as fh:
+                fh.write(text)
+            written.append(path)
+    except OSError:
+        for path in written:
+            os.remove(path + ".tmp")
+        raise
     for path, _ in targets:
         # Only the first backup is kept: it is the file from before the Set up page
         # ever wrote here (usually hand-written), which a second save must not lose.
         if os.path.exists(path) and not os.path.exists(path + ".bak"):
             shutil.copyfile(path, path + ".bak")
-    for path, data in targets:
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2, ensure_ascii=False)
+    for path, _ in targets:
+        os.replace(path + ".tmp", path)
 
 
 def secret_line(profile: Mapping[str, Any]) -> str:
@@ -191,10 +207,102 @@ def prefill_from_existing(profile: Optional[Mapping[str, Any]],
             out[key] = value
     if "needs_sponsorship" in out:
         out["needs_sponsorship"] = "yes" if out["needs_sponsorship"].upper().startswith("YES") else "no"
-    if "### Location" in text:
-        out["remote_ok"] = "yes" if re.search(r"^- Remote OK", text, re.M) else "no"
+    remote = re.search(r"^- Remote OK:\s*(yes|no)", text, re.M | re.I)
+    if remote:
+        out["remote_ok"] = remote.group(1).lower()
+    extras = [skill for skill, tier in _evidence(text) if tier == 4]
+    if extras:
+        out["extra_skills"] = ", ".join(extras)
     for key, source in _ANSWER_KEYS.items():
         value = str((app_answers or {}).get(source) or "").strip()
         if value and not value.startswith("<") and key not in out:
             out[key] = value
     return out
+
+
+# ── reading a saved profile back ─────────────────────────────────────────────
+def _sections(text: str) -> Dict[str, List[str]]:
+    """profile_v2 split by its "### " headings, keyed by the heading in lower case."""
+    out: Dict[str, List[str]] = {}
+    current = ""
+    for line in text.splitlines():
+        if line.startswith("### "):
+            current = line[4:].strip().lower()
+            out[current] = []
+        elif current:
+            out[current].append(line)
+    return out
+
+
+def _section(text: str, prefix: str) -> List[str]:
+    return next((lines for heading, lines in _sections(text).items()
+                 if heading.startswith(prefix)), [])
+
+
+def _evidence(text: str) -> List[Tuple[str, int]]:
+    out = []
+    for line in _section(text, "evidence"):
+        match = re.match(r"^- (.+?):\s*tier_(\d)", line)
+        if match and not match.group(1).startswith("<"):
+            out.append((_unesc(match.group(1).strip()), int(match.group(2))))
+    return out
+
+
+def existing_ledger(profile: Optional[Mapping[str, Any]]) -> Optional[Dict[str, int]]:
+    ledger = (profile or {}).get("experience_ledger") or {}
+    if all(isinstance(ledger.get(key), int) for key in LEDGER_KEYS):
+        return {key: ledger[key] for key in LEDGER_KEYS}
+    return None
+
+
+def draft_from_existing(profile: Mapping[str, Any]) -> OnboardingDraft:
+    """A draft rebuilt from a saved profile, so it can be edited without reading the CV again.
+
+    It carries what build_profile needs and the answers cannot supply: the
+    summary, languages, location and CV-judged skills. Text it cannot place is
+    not carried over; the original file is kept as .bak on the next save.
+    """
+    text = str(profile.get("profile_v2") or "")
+    languages = []
+    for line in _section(text, "languages"):
+        match = re.match(r"^- (.+?):\s*(.+)$", line)
+        if match and not match.group(1).startswith("<"):
+            level = _unesc(match.group(2).strip())
+            languages.append(LanguageLevel(language=_unesc(match.group(1).strip()),
+                                           level="" if level == "level not stated" else level))
+    place = Place()
+    for line in _section(text, "location"):
+        match = re.match(r"^- Base:\s*(.+)$", line)
+        if match and not match.group(1).startswith(("<", "not stated")):
+            city, _, country = _unesc(match.group(1).strip()).rpartition(",")
+            place = Place(city=(city or country).strip(), country=country.strip() if city else "")
+    skills = [SkillTier(skill=skill, tier=tier) for skill, tier in _evidence(text) if tier != 4]
+    return OnboardingDraft(short_profile=str(profile.get("short_profile") or ""),
+                           languages=languages, location=place, skills=skills)
+
+
+def effective_fte_years(ledger: Mapping[str, int]) -> float:
+    """Same formula as scoring/score_jobs.py: part-time and intern time count half."""
+    return round((ledger["full_time_professional_months"]
+                  + 0.5 * (ledger["working_student_months"] + ledger["internship_months"]
+                           + ledger["thesis_or_research_months"])) / 12, 1)
+
+
+def profile_notes(profile: Mapping[str, Any]) -> str:
+    """short_profile and profile_v2 as a reader should see them: placeholders filled in.
+
+    For prompts that quote the profile rather than score with it (the CV-fit
+    report, the tailor's fact seeding). The raw template would show {{escaped}}
+    braces and unfilled {placeholders}.
+    """
+    text = str(profile.get("profile_v2") or "")
+    ledger = existing_ledger(profile)
+    rendered = None
+    if ledger is not None:
+        try:
+            rendered = text.format(effective_fte_years=effective_fte_years(ledger), **ledger)
+        except (KeyError, IndexError, ValueError):
+            rendered = None
+    if rendered is None:
+        rendered = _unesc(text)
+    return "\n".join(part for part in (str(profile.get("short_profile") or ""), rendered) if part)

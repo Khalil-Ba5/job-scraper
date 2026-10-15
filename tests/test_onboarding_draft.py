@@ -230,3 +230,18 @@ class TestReviewFixes:
         monkeypatch.setattr(d, "extract_text", broken)
         with pytest.raises(d.OnboardingError, match="could not be read"):
             d.ingest_cv(b"not a pdf", client=FakeClient("{}"), today_note="t")
+
+
+class TestDeferredFixes:
+    def test_years_are_converted_to_months(self):
+        _, months = d.answer_overrides({"role_months:0": "2 years", "role_months:1": "1,5 Jahre",
+                                        "role_months:2": "14", "role_months:3": "18 months"})
+        assert months == {0: 24, 1: 18, 2: 14, 3: 18}
+
+    def test_a_role_that_has_not_started_counts_zero_and_asks_nothing(self):
+        exp = models.Experience(job_title="Data Scientist", company="Acme",
+                                start_date="2027-01", end_date="Present")
+        assert d.role_months(exp, TODAY) == 0
+        draft = d.OnboardingDraft(resume=models.Resume(experience=[exp]),
+                                  roles=[d.RoleKind(index=0)])
+        assert d.code_questions(draft, TODAY) == []
