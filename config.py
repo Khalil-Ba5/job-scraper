@@ -203,7 +203,7 @@ EMAIL_ALERT_MIN_SCORE_ENGLISH = _int_env("EMAIL_ALERT_MIN_SCORE_ENGLISH", 55)
 # How many jobs the mail lists in full before falling back to a count. The mail is
 # a nudge to open the queue, not the queue itself.
 EMAIL_ALERT_MAX_JOBS = _int_env("EMAIL_ALERT_MAX_JOBS", 10)
-SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_HOST = os.environ.get("SMTP_HOST") or "smtp.gmail.com"
 SMTP_PORT = _int_env("SMTP_PORT", 587)
 SMTP_USER = os.environ.get("SMTP_USER")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
