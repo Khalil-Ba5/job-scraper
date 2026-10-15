@@ -63,6 +63,21 @@ def parse_resume_with_ai(resume_text):
     )
     return response_text
 
+def normalize_resume_dict(data):
+    """Empty strings and None become "NA", recursively.
+
+    The rest of the pipeline reads "NA" as "the CV does not say"; an empty string
+    would read as a value. Shared by the parser and the Set up page.
+    """
+    if isinstance(data, dict):
+        return {key: normalize_resume_dict(value) for key, value in data.items()}
+    if isinstance(data, list):
+        return [normalize_resume_dict(item) for item in data]
+    if data == "" or data is None:
+        return "NA"
+    return data
+
+
 def main():
     """
     Main function to orchestrate the resume parsing process.
@@ -102,17 +117,7 @@ def main():
         # Convert the JSON string response to a dictionary
         resume_data_dict = json.loads(parsed_resume_details_str)
         
-        # Recursive function to replace empty values or None with "NA"
-        def replace_empty_with_na(data):
-            if isinstance(data, dict):
-                return {k: replace_empty_with_na(v) for k, v in data.items()}
-            elif isinstance(data, list):
-                return[replace_empty_with_na(i) for i in data]
-            elif data == "" or data is None:
-                return "NA"
-            return data
-
-        resume_data_dict = replace_empty_with_na(resume_data_dict)
+        resume_data_dict = normalize_resume_dict(resume_data_dict)
 
     except json.JSONDecodeError as e:
         logging.error(f"Error decoding JSON response from AI: {e}")

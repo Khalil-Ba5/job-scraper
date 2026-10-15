@@ -175,3 +175,18 @@ class TestGermanFilter:
 
     def test_missing_breakdown_is_treated_as_unstated(self):
         assert apply_queue.matches_german({}, "B2")
+
+
+class TestWorthTailoring:
+    """Tailoring is suggested, never run for you: the bar only decides the hint."""
+
+    def test_at_or_above_the_bar_is_suggested(self):
+        assert apply_queue.worth_tailoring({"resume_score": 55}, 55)
+        assert apply_queue.worth_tailoring({"resume_score": 82}, 55)
+
+    def test_below_the_bar_is_not(self):
+        assert not apply_queue.worth_tailoring({"resume_score": 54}, 55)
+
+    def test_unscored_is_not(self):
+        assert not apply_queue.worth_tailoring({"resume_score": None}, 55)
+        assert not apply_queue.worth_tailoring({}, 55)

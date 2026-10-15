@@ -370,9 +370,8 @@ def ensure_seeded() -> FactBase:
         try:
             with open(profile_path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
-            profile_notes = "\n".join(
-                str(v) for k, v in data.items() if k in ("short_profile", "profile_v2")
-            )
+            from onboarding.build import profile_notes as render_notes
+            profile_notes = render_notes(data)
         except (ValueError, OSError):
             logging.warning("candidate_profile.json unreadable; seeding from the CV alone.")
 

@@ -1,3 +1,10 @@
+"""Search queries, caps, thresholds and models — the settings you are expected to edit.
+
+Secrets never go here: this file is committed. They go in .env (see .env.example).
+Every setting below, and every environment variable that overrides one, is
+explained in docs/configuration.md.
+"""
+
 import os
 from dotenv import load_dotenv
 
@@ -52,12 +59,12 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("GEMINI_API_KEY") 
 # --- LLM Settings ---
 # Use any model supported by LiteLLM (gemini, openai/gpt-4o-mini, groq/llama-3.3-70b-versatile)
 # Full list of supported models & naming: https://docs.litellm.ai/docs/providers
-LLM_MODEL = "anthropic/claude-sonnet-4-6"
+LLM_MODEL = os.environ.get("LLM_MODEL") or "anthropic/claude-sonnet-4-6"
 
 # Cheap fast model for the pre-scoring screen pass (hard gates + rough band).
 # Only jobs that pass the screen get the full (expensive) scoring call.
 SCREENING_ENABLED = True
-LLM_SCREEN_MODEL = "anthropic/claude-haiku-4-5"
+LLM_SCREEN_MODEL = os.environ.get("LLM_SCREEN_MODEL") or "anthropic/claude-haiku-4-5"
 # Per-RUN, and the pipeline now runs four times a day — these are quartered from
 # their once-a-day values so the daily totals (and the LLM spend) stay put.
 JOBS_TO_SCREEN_PER_RUN = _int_env("JOBS_TO_SCREEN_PER_RUN", 40)
@@ -172,7 +179,7 @@ APPLICATION_ANSWERS_PATH = "application_answers.json"
 
 # Pre-made CVs, picked by keyword on the job title — no generation, no LLM.
 # First match wins, so put the specific keywords first. Files are resolved inside
-# CV_LIBRARY_DIR. Left empty deliberately: the routing is Nouha's to define, and a
+# CV_LIBRARY_DIR. Left empty deliberately: the routing is yours to define, and a
 # guessed mapping would send the wrong CV, which is worse than being asked to pick.
 #   e.g. [("data engineer", "cv_data_engineering.pdf"), ("data", "cv_data_science.pdf")]
 CV_LIBRARY_DIR = "cv"
@@ -213,6 +220,15 @@ MANUAL_JOBS_PATH = "manual_jobs.json"
 # deadlines. Copy candidate_profile.json.example to this path and fill it in.
 CANDIDATE_PROFILE_PATH = "candidate_profile.json"
 
+# --- Profile onboarding (the Set up page) ---
+# One call reads the CV and drafts the profile. The cheap screening model is
+# enough for extraction; point ONBOARDING_MODEL at LLM_MODEL if the parsed CV
+# comes back thin.
+ONBOARDING_MODEL = os.environ.get("ONBOARDING_MODEL") or LLM_SCREEN_MODEL
+# The last draft, kept so that editing answers later needs no second call. It
+# holds the parsed CV, so it is gitignored like the profile itself.
+ONBOARDING_DRAFT_PATH = "onboarding_draft.json"
+
 # --- Processing Limits ---
 SCRAPING_SOURCES = ["linkedin", "arbeitsagentur"]
 # Indeed was removed in Step A.0: every search came back 403/401 from GitHub-hosted
@@ -221,8 +237,10 @@ JOBS_TO_SCORE_PER_RUN = _int_env("JOBS_TO_SCORE_PER_RUN", 15)
 # Screened and scored only after every other source's unscored jobs. Nearly all
 # German-language, and German-language ads have produced no interview so far.
 SCORE_LAST_PROVIDERS = ["arbeitsagentur"]
-JOBS_TO_CUSTOMIZE_PER_RUN = 3
-RESUME_CUSTOMIZATION_MIN_SCORE = 55  # Only tailor resumes for strong matches; below this, effort is better spent elsewhere
+JOBS_TO_CUSTOMIZE_PER_RUN = 3  # only for running resume.custom_resume_generator by hand
+# The queue suggests a tailored CV (Write my CV) at or above this score. Nothing
+# is tailored automatically: the scheduled pipeline has no tailoring step.
+RESUME_CUSTOMIZATION_MIN_SCORE = 55
 # Score each tailored CV as well. Off: the model scoring a CV it rewrote for that
 # posting measures echo, not fit, and the figure is only ever recorded beside the
 # real score (score_breakdown.custom_cv_score), never in place of it.

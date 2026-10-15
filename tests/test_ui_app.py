@@ -13,6 +13,8 @@ import pytest
 from review import apply_queue
 from review import calibration
 from db import supabase_utils
+import config
+from onboarding import status as onboarding_status
 
 st = pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
@@ -96,6 +98,9 @@ def app(monkeypatch):
     # Sidebar and calibration reads that would otherwise go to the network.
     monkeypatch.setattr(supabase_utils, "get_scrape_pulse", lambda **kw: None)
     monkeypatch.setattr(supabase_utils, "get_skip_reason_counts", lambda: {})
+    # The app opens on Set up when there is no valid profile. These tests are
+    # about the other pages, so they run as an already-onboarded user.
+    monkeypatch.setattr(onboarding_status, "profile_present", lambda *a, **k: True)
     # The app's reads go through st.cache_data, which lives for the whole
     # process: without this, one test's fake rows are served to the next.
     st.cache_data.clear()
@@ -425,6 +430,26 @@ class TestFocusQueue:
         labels = [b.label for b in app.button] + [b.label for b in app.get("link_button")]
         for key, _ in apply_queue.SHORTCUTS:
             assert any(label.endswith(f"`{key}`") for label in labels), key
+
+    def test_a_strong_match_suggests_tailoring_without_doing_it(self, app, monkeypatch):
+        """The 82 clears the bar: the rail offers the CV, and the click only navigates."""
+        from tailor import store as tailor_store
+        monkeypatch.setattr(tailor_store, "exists", lambda job_id: False)
+        # The CV page fetches the full posting; nothing to fetch offline.
+        monkeypatch.setattr(supabase_utils, "get_job_with_description", lambda job_id: None)
+        app.run()
+        assert "Worth a tailored CV" in markdown_text(app)
+        app.button("suggest_tailor_j1").click().run()
+        assert not app.exception
+        assert app.session_state["page"] == "tailor"
+
+    def test_an_already_tailored_job_says_so_instead(self, app, monkeypatch):
+        from tailor import store as tailor_store
+        monkeypatch.setattr(tailor_store, "exists", lambda job_id: job_id == "j1")
+        app.run()
+        text = markdown_text(app)
+        assert "Worth a tailored CV" not in text
+        assert "Tailored CV ready" in text
 
     def test_apply_marks_the_focused_job(self, app, monkeypatch):
         calls = []
@@ -851,3 +876,98 @@ class TestArchetypesMarketPanel:
         if "No clustering run found yet" in text:
             pytest.skip("no clustering output on this machine")
         assert "B1 stated" in text
+
+
+class TestSetupPage:
+    @pytest.fixture
+    def setup_app(self, app, monkeypatch, tmp_path):
+        monkeypatch.setattr(supabase_utils, "base_resume_exists", lambda: True)
+        monkeypatch.setattr(config, "ONBOARDING_DRAFT_PATH", str(tmp_path / "draft.json"))
+        monkeypatch.setattr(config, "CANDIDATE_PROFILE_PATH", str(tmp_path / "profile.json"))
+        monkeypatch.setattr(config, "APPLICATION_ANSWERS_PATH", str(tmp_path / "answers.json"))
+        app.session_state["page"] = "setup"
+        return app
+
+    def test_opens_on_setup_when_there_is_no_profile(self, app, monkeypatch):
+        monkeypatch.setattr(onboarding_status, "profile_present", lambda *a, **k: False)
+        monkeypatch.setattr(supabase_utils, "base_resume_exists", lambda: False)
+        app.run()
+        assert not app.exception
+        assert app.session_state["page"] == "setup"
+
+    def test_renders_the_upload_and_the_checks_with_no_draft(self, setup_app):
+        setup_app.run()
+        assert not setup_app.exception
+        text = markdown_text(setup_app)
+        assert "Supabase settings" in text and "Profile saved" in text
+        assert setup_app.button("onb_read").disabled  # nothing uploaded yet
+
+    def test_questions_combine_the_models_and_the_fallbacks(self, setup_app):
+        from tests.onboarding_samples import make_draft
+        setup_app.session_state["onb_draft"] = make_draft()
+        setup_app.run()
+        assert not setup_app.exception
+        labels = ([w.label for w in setup_app.date_input] + [w.label for w in setup_app.text_input]
+                  + [w.label for w in setup_app.selectbox] + [w.label for w in setup_app.radio])
+        assert "Your role at Acme is ongoing — from which date could you start?" in labels
+        assert "What is your gross yearly salary expectation?" in labels
+
+    def test_a_failed_read_still_leaves_every_question(self, setup_app):
+        from onboarding.draft import OnboardingDraft
+        from onboarding.questions import FIELDS
+        setup_app.session_state["onb_draft"] = OnboardingDraft()
+        setup_app.run()
+        assert not setup_app.exception
+        labels = ([w.label for w in setup_app.date_input] + [w.label for w in setup_app.text_input]
+                  + [w.label for w in setup_app.selectbox] + [w.label for w in setup_app.radio])
+        for spec in FIELDS:
+            assert spec.fallback in labels, spec.key
+
+    def test_save_writes_both_files_and_offers_the_secret(self, setup_app, tmp_path):
+        import json
+        from tests.onboarding_samples import ANSWERS, make_draft
+        setup_app.session_state["onb_draft"] = make_draft()
+        setup_app.session_state["onb_answers"] = dict(ANSWERS)
+        setup_app.session_state["onb_step"] = "review"
+        setup_app.run()
+        assert not setup_app.exception
+        setup_app.button("onb_save").click().run()
+        assert not setup_app.exception
+        saved = json.loads((tmp_path / "profile.json").read_text(encoding="utf-8"))
+        assert saved["experience_ledger"]["working_student_months"] == 22
+        assert (tmp_path / "answers.json").exists()
+        assert any('"short_profile"' in c.value for c in setup_app.code)
+
+    def test_duplicate_question_ids_from_the_model_do_not_crash(self, setup_app):
+        from onboarding.draft import Question
+        from tests.onboarding_samples import make_draft
+        setup_app.session_state["onb_draft"] = make_draft(questions=[
+            Question(id="q", field="salary_expectation", text="Salary?"),
+            Question(id="q", field="notice_period", text="Notice?")])
+        setup_app.run()
+        assert not setup_app.exception
+
+    def test_no_model_call_while_the_database_is_unreachable(self, setup_app, monkeypatch):
+        monkeypatch.setattr(supabase_utils, "base_resume_exists", lambda: None)
+        setup_app.run()
+        assert not setup_app.exception
+        assert setup_app.button("onb_reread").disabled
+
+    def test_database_is_checked_once_not_on_every_rerun(self, setup_app, monkeypatch):
+        calls = []
+        monkeypatch.setattr(supabase_utils, "base_resume_exists", lambda: calls.append(1) or True)
+        setup_app.run()
+        setup_app.run()
+        assert len(calls) == 1
+
+    def test_a_saved_profile_opens_on_the_questions_without_a_read(self, setup_app, tmp_path):
+        import json
+        from onboarding import build
+        from tests.onboarding_samples import ANSWERS, LEDGER, make_draft
+        (tmp_path / "profile.json").write_text(
+            json.dumps(build.build_profile(make_draft(), ANSWERS, LEDGER)), encoding="utf-8")
+        setup_app.run()
+        assert not setup_app.exception
+        values = {w.label: w.value for w in setup_app.text_input}
+        assert values["What is your residence or work permit status (or citizenship), and does an "
+                      "employer need to do anything?"] == "Blue Card holder"

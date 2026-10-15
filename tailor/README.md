@@ -372,7 +372,7 @@ full-time experience.
 |---|---|---|
 | `TAILOR_WRITER_MODEL` | `config.LLM_MODEL` (Sonnet) | |
 | `TAILOR_JUDGE_MODEL` | `anthropic/claude-opus-5` | deliberately not the writer's model |
-| `TAILOR_MAX_ROUNDS` | 3 | |
+| `TAILOR_MAX_ROUNDS` | 2 | |
 | `TAILOR_MAX_QUESTIONS` | 5 | opening interview, reading the posting cold |
 | `TAILOR_MAX_SCORER_LEADS` | 40 | unconfirmed scorer leads held at once |
 | `TAILOR_MAX_PROBE_QUESTIONS` | 3 | mid-loop, off the judge's objections — it interrupts a run in flight, so it has to be worth stopping for |

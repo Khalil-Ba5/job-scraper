@@ -128,15 +128,8 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: python -m scoring.score_jobs
 
-      - name: Customize Resumes
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY || secrets.GEMINI_FIRST_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        run: python -m resume.custom_resume_generator
+      # No CV tailoring step: tailoring is suggested in the app (Write my CV) and
+      # run by hand, never unattended.
 
   # ── Stage 3: manage ───────────────────────────────────────────────────────
   # Same !cancelled() reasoning as score: a red scrape leg must not cost the

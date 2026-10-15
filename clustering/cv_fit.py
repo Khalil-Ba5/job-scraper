@@ -122,9 +122,8 @@ def _load_cv_text() -> Dict[str, Any]:
             # profile_v2 carries the evidence index - the only place that records
             # what is true but missing from the CV, which is the whole basis of
             # the "free wins" bucket.
-            profile_notes = "\n".join(
-                str(v) for k, v in data.items() if k in ("short_profile", "profile_v2")
-            )
+            from onboarding.build import profile_notes as render_notes
+            profile_notes = render_notes(data)
         except (ValueError, OSError):
             logging.warning("candidate_profile.json unreadable; tier-4 gaps will be missed.")
 

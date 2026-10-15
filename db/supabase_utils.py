@@ -1354,6 +1354,42 @@ def download_resume_from_storage(file_name: str = "resume.pdf") -> Optional[byte
         return None
 
 
+def upload_base_resume_pdf(pdf_bytes: bytes, file_name: str = "resume.pdf") -> bool:
+    """
+    Stores the user's CV in the 'resumes' bucket, replacing the previous one.
+    The Set up page calls this; download_resume_from_storage reads the same file.
+    """
+    if not pdf_bytes:
+        logging.error("Cannot upload an empty CV.")
+        return False
+    try:
+        supabase.storage.from_(config.SUPABASE_RESUME_STORAGE_BUCKET).upload(
+            path=file_name,
+            file=pdf_bytes,
+            file_options={"content-type": "application/pdf", "upsert": "true"},
+        )
+        return True
+    except Exception as e:
+        logging.error(f"Error uploading '{file_name}' to Supabase Storage: {e}")
+        return False
+
+
+def base_resume_exists() -> Optional[bool]:
+    """
+    Whether a parsed CV is stored: True or False when the table answers, None when
+    the database cannot be reached (wrong URL, key, or init.sql not run).
+    """
+    try:
+        response = supabase.table(config.SUPABASE_BASE_RESUME_TABLE_NAME)\
+            .select("id")\
+            .limit(1)\
+            .execute()
+        return bool(response.data)
+    except Exception as e:
+        logging.error(f"Error checking for a base resume: {e}")
+        return None
+
+
 def save_base_resume(resume_data: dict) -> bool:
     """
     Saves (upserts) the parsed base resume JSON to the 'base_resume' table.
