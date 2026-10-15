@@ -154,7 +154,7 @@ def build_message(matches: List[Dict[str, Any]],
         if verdict:
             text.append(f"    {verdict}")
         if url:
-            text.append(f"    {url}")
+            text.append(f"    View posting: {url}")
         text.append("")
 
         heading = (f'<a href="{html.escape(url, quote=True)}" '
@@ -168,6 +168,11 @@ def build_message(matches: List[Dict[str, Any]],
             + '<br>'
             f'<span style="color:#555">{html.escape(company)} · <strong>{score}/100</strong></span>'
             + (f'<br><span style="color:#555">{html.escape(verdict)}</span>' if verdict else "")
+            # The linked title alone did not read as a link in most mail clients;
+            # an explicit, underlined call to action does.
+            + (f'<br><a href="{html.escape(url, quote=True)}" '
+               'style="color:#2a78d6;text-decoration:underline;font-weight:600">View posting →</a>'
+               if url else "")
             + '</li>'
         )
 

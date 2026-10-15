@@ -183,3 +183,14 @@ class TestEnglishAdBar:
         _, text, body_html = notify.build_message([english_job("en", 58)])
         assert "70+ (55+ for English-language ads)" in text
         assert "70+ (55+ for English-language ads)" in body_html
+
+
+def test_each_job_carries_a_visible_posting_link():
+    """The linked title alone was missed; every job gets an explicit link too."""
+    job = {"job_id": "1", "job_title": "Data Scientist", "company": "VRG-Gruppe",
+           "resume_score": 58, "job_url": "https://www.linkedin.com/jobs/view/4474821790/",
+           "score_breakdown": {}}
+    _, text, body_html = notify.build_message([job])
+    assert "View posting: https://www.linkedin.com/jobs/view/4474821790/" in text
+    assert 'href="https://www.linkedin.com/jobs/view/4474821790/"' in body_html
+    assert "View posting" in body_html
