@@ -21,3 +21,8 @@ dashboard.html
 
 # Design mockup of the app (exported page), kept locally as a reference.
 Job Hunt.html
+
+# Written by the Set up page: the parsed-CV draft, and backups of the personal
+# files it replaces. Same personal data as the files themselves.
+onboarding_draft.json
+*.json.bak

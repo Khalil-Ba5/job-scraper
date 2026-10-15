@@ -220,6 +220,15 @@ MANUAL_JOBS_PATH = "manual_jobs.json"
 # deadlines. Copy candidate_profile.json.example to this path and fill it in.
 CANDIDATE_PROFILE_PATH = "candidate_profile.json"
 
+# --- Profile onboarding (the Set up page) ---
+# One call reads the CV and drafts the profile. The cheap screening model is
+# enough for extraction; point ONBOARDING_MODEL at LLM_MODEL if the parsed CV
+# comes back thin.
+ONBOARDING_MODEL = os.environ.get("ONBOARDING_MODEL") or LLM_SCREEN_MODEL
+# The last draft, kept so that editing answers later needs no second call. It
+# holds the parsed CV, so it is gitignored like the profile itself.
+ONBOARDING_DRAFT_PATH = "onboarding_draft.json"
+
 # --- Processing Limits ---
 SCRAPING_SOURCES = ["linkedin", "arbeitsagentur"]
 # Indeed was removed in Step A.0: every search came back 403/401 from GitHub-hosted
