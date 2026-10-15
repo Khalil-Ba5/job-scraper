@@ -65,6 +65,17 @@ def missing_fields(answers: Mapping[str, str]) -> List[str]:
             if not spec.optional and not _answered(answers.get(spec.key))]
 
 
+def missing_in_form(form_questions: Sequence[Dict], answers: Mapping[str, str]) -> List[str]:
+    """Required catalogue fields, plus any months question shown, still unanswered.
+
+    A role whose dates could not be read is left out of the experience ledger
+    until its months are given; skipping the question would count it as zero.
+    """
+    months = [q["field"] for q in form_questions
+              if q["field"].startswith("role_months:") and not _answered(answers.get(q["field"]))]
+    return missing_fields(answers) + months
+
+
 def fallback_questions(keys: Sequence[str]) -> List[Dict]:
     """The built-in question for each field key, in the shape the model's questions have."""
     out = []
@@ -86,6 +97,12 @@ def complete_question_set(model_questions: List[Dict], extra: List[Dict]) -> Lis
         if q["field"] in seen:
             continue
         seen.add(q["field"])
+        spec = FIELD_BY_KEY.get(q["field"])
+        if spec:
+            # The model words the question; the catalogue decides its type. A start
+            # date typed as free text never reaches the scorer's date regex, and a
+            # "Yes, after graduation" option would not read as yes.
+            q = dict(q, type=spec.type, options=list(spec.options))
         out.append(q)
     out += fallback_questions([spec.key for spec in FIELDS if spec.key not in seen])
     return out

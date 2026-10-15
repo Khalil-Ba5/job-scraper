@@ -256,6 +256,19 @@ CV text:
 """
 
 
+def _drop_nulls(value):
+    """Remove null values, recursively, so the field defaults apply.
+
+    Tool-call output routinely says null for "not stated" (a current role's end
+    date, a missing phone). Every field here has a default that means the same.
+    """
+    if isinstance(value, dict):
+        return {k: _drop_nulls(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_drop_nulls(item) for item in value if item is not None]
+    return value
+
+
 def _strip_fences(raw: str) -> str:
     text = raw.strip()
     if text.startswith("```"):
@@ -285,11 +298,16 @@ def run_onboarding_call(cv_text: str, client=None, model: Optional[str] = None,
         raise OnboardingError("The model returned an empty answer. Try again, or set "
                               "ONBOARDING_MODEL to a stronger model in .env.")
     try:
-        draft = OnboardingDraft.model_validate_json(_strip_fences(raw))
+        draft = OnboardingDraft.model_validate(_drop_nulls(json.loads(_strip_fences(raw))))
     except ValueError as exc:
         raise OnboardingError("The model's answer was not in the expected shape. Try again, "
                               "or set ONBOARDING_MODEL to a stronger model in .env.") from exc
     draft.questions = draft.questions[:MAX_QUESTIONS]
+    # The model judges tiers from the CV alone, so 1-3. Tier 4 ("true, not on the
+    # CV") and 5 ("not done") come only from the user; a 7 clamped to 5 would
+    # record a skill the CV shows as one the candidate lacks.
+    for skill in draft.skills:
+        skill.tier = min(skill.tier, 3)
     return draft
 
 
@@ -332,7 +350,11 @@ def ingest_cv(pdf_bytes: bytes, upload: bool = True, client=None,
     from db import supabase_utils
     from resume.resume_parser import normalize_resume_dict
 
-    text = extract_text(pdf_bytes)
+    try:
+        text = extract_text(pdf_bytes)
+    except Exception as exc:  # noqa: BLE001 - pdfminer raises its own types for corrupt/encrypted files
+        raise OnboardingError("This file could not be read as a PDF (damaged or password-"
+                              "protected?). Export the CV again and upload that.") from exc
     if not text.strip():
         raise OnboardingError("This PDF has no text in it (a scan?). Export the CV again "
                               "from your editor as a PDF and upload that.")

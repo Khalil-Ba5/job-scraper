@@ -2403,7 +2403,9 @@ def render_setup_upload(draft, can_call):
 
 
 def question_widget(q, default):
-    key = f"onb_q_{q['id']}"
+    # Keyed by field, not by the model's id: complete_question_set makes fields
+    # unique, while two model questions can share an id and collide.
+    key = f"onb_q_{q['field']}"
     if q["type"] == "date":
         try:
             value = date.fromisoformat(default) if default else None
@@ -2447,10 +2449,13 @@ def render_setup_questions(draft):
                 collected[q["field"]] = question_widget(q, default)
         submitted = st.form_submit_button("Continue", type="primary")
     if submitted:
-        missing = onboarding_questions.missing_fields(collected)
+        missing = onboarding_questions.missing_in_form(qs, collected)
         if missing:
+            text_of = {q["field"]: q["text"] for q in qs}
             st.error("Still needed: " + "; ".join(
-                onboarding_questions.FIELD_BY_KEY[key].meaning for key in missing))
+                onboarding_questions.FIELD_BY_KEY[key].meaning
+                if key in onboarding_questions.FIELD_BY_KEY else text_of[key]
+                for key in missing))
             return
         st.session_state["onb_answers"] = collected
         st.session_state["onb_step"] = "review"

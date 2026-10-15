@@ -35,7 +35,8 @@ def _unesc(text: str) -> str:
 
 
 def _yes(value) -> bool:
-    return str(value or "").strip().lower() in ("yes", "y", "ja", "true", "1")
+    text = str(value or "").strip().lower()
+    return text in ("y", "true", "1") or text.startswith(("yes", "ja"))
 
 
 def _split(text) -> List[str]:
@@ -133,7 +134,9 @@ def save_files(profile: Dict[str, Any], app_answers: Dict[str, Any],
     targets = ((profile_path or config.CANDIDATE_PROFILE_PATH, profile),
                (answers_path or config.APPLICATION_ANSWERS_PATH, app_answers))
     for path, _ in targets:
-        if os.path.exists(path):
+        # Only the first backup is kept: it is the file from before the Set up page
+        # ever wrote here (usually hand-written), which a second save must not lose.
+        if os.path.exists(path) and not os.path.exists(path + ".bak"):
             shutil.copyfile(path, path + ".bak")
     for path, data in targets:
         with open(path, "w", encoding="utf-8") as fh:

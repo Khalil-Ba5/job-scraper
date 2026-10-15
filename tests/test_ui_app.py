@@ -937,3 +937,12 @@ class TestSetupPage:
         assert saved["experience_ledger"]["working_student_months"] == 22
         assert (tmp_path / "answers.json").exists()
         assert any('"short_profile"' in c.value for c in setup_app.code)
+
+    def test_duplicate_question_ids_from_the_model_do_not_crash(self, setup_app):
+        from onboarding.draft import Question
+        from tests.onboarding_samples import make_draft
+        setup_app.session_state["onb_draft"] = make_draft(questions=[
+            Question(id="q", field="salary_expectation", text="Salary?"),
+            Question(id="q", field="notice_period", text="Notice?")])
+        setup_app.run()
+        assert not setup_app.exception

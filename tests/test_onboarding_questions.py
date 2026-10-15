@@ -51,3 +51,23 @@ def test_prompt_lists_every_field():
     text = questions.prompt_field_list()
     for spec in questions.FIELDS:
         assert spec.key in text
+
+
+class TestReviewFixes:
+    def test_catalogue_fields_keep_their_own_type_and_options(self):
+        model = [{"id": "a", "field": "earliest_start", "text": "When?", "type": "text",
+                  "options": [], "suggested": "April 2026"},
+                 {"id": "b", "field": "needs_sponsorship", "text": "Visa?", "type": "choice",
+                  "options": ["Yes, after graduation", "No"], "suggested": ""}]
+        qs = {q["field"]: q for q in questions.complete_question_set(model, [])}
+        assert qs["earliest_start"]["type"] == "date" and qs["earliest_start"]["text"] == "When?"
+        assert qs["needs_sponsorship"]["type"] == "yes_no"
+        assert qs["needs_sponsorship"]["options"] == []
+
+    def test_an_unanswered_months_question_is_missing(self):
+        form = [{"id": "m", "field": "role_months:0", "text": "How long?", "type": "text",
+                 "options": [], "suggested": ""}]
+        answers = dict(full_answers(), **{"role_months:0": ""})
+        assert questions.missing_in_form(form, answers) == ["role_months:0"]
+        answers["role_months:0"] = "14"
+        assert questions.missing_in_form(form, answers) == []

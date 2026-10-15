@@ -129,3 +129,16 @@ class TestPrefill:
     def test_nothing_to_read(self):
         assert build.prefill_from_existing(None, None) == {}
         assert build.read_json("does-not-exist.json") is None
+
+
+class TestReviewFixes:
+    def test_a_qualified_yes_is_still_yes(self):
+        p = profile(dict(ANSWERS, needs_sponsorship="Yes, after graduation"))
+        assert "- Needs sponsorship for full-time work: YES" in p["profile_v2"]
+
+    def test_the_first_backup_is_never_overwritten(self, tmp_path):
+        pp, ap = tmp_path / "p.json", tmp_path / "a.json"
+        pp.write_text('{"hand": "written"}', encoding="utf-8")
+        build.save_files(profile(), {"x": 1}, str(pp), str(ap))
+        build.save_files(profile(), {"x": 2}, str(pp), str(ap))
+        assert json.loads((tmp_path / "p.json.bak").read_text(encoding="utf-8")) == {"hand": "written"}

@@ -204,3 +204,29 @@ class TestIngest:
                              today_note="t")
         assert len(result.warnings) == 2
         assert result.draft.resume.name == "Alex Example"
+
+
+class TestReviewFixes:
+    def test_nulls_in_model_output_do_not_fail_the_read(self):
+        data = json.loads(make_draft().model_dump_json())
+        data["resume"]["experience"][0]["end_date"] = None
+        data["resume"]["phone"] = None
+        data["languages"][0]["confident"] = None
+        data["questions"][0]["options"] = None
+        result = d.run_onboarding_call("x", client=FakeClient(json.dumps(data)), today_note="t")
+        assert result.resume.experience[0].end_date == ""
+        assert result.questions[0].options == []
+
+    def test_model_tiers_are_held_to_the_cv_range(self):
+        skills = [d.SkillTier(skill="a", tier=7), d.SkillTier(skill="b", tier=4),
+                  d.SkillTier(skill="c", tier=2)]
+        raw = make_draft(skills=skills).model_dump_json()
+        result = d.run_onboarding_call("x", client=FakeClient(raw), today_note="t")
+        assert [s.tier for s in result.skills] == [3, 3, 2]
+
+    def test_a_file_that_is_not_a_pdf_is_a_readable_error(self, monkeypatch):
+        def broken(data):
+            raise ValueError("PdfminerException: no /Root object")
+        monkeypatch.setattr(d, "extract_text", broken)
+        with pytest.raises(d.OnboardingError, match="could not be read"):
+            d.ingest_cv(b"not a pdf", client=FakeClient("{}"), today_note="t")
