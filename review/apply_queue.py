@@ -277,6 +277,17 @@ def effort_hours(job: Dict[str, Any]) -> Optional[float]:
         return None
 
 
+def worth_tailoring(job: Dict[str, Any], min_score: int) -> bool:
+    """Whether the queue should suggest writing a tailored CV for this job.
+
+    Only a suggestion: tailoring is a few minutes of LLM calls plus a gap
+    interview that needs you, so it runs from the Write my CV page when you
+    choose to, never unattended.
+    """
+    score = job.get("resume_score")
+    return score is not None and score >= min_score
+
+
 def sort_jobs(jobs: List[Dict[str, Any]], mode: str = "score") -> List[Dict[str, Any]]:
     """
     Fixed rank order for the queue.

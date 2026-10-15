@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
+import config
 from review import apply_queue
 from review import application_view
 from review import calibration
@@ -720,6 +721,10 @@ def card_facts(job, breakdown):
         facts.append(("Scorer", REC_LABELS[rec]))
     elif rec == "apply_now":
         facts.append(("Scorer", "Apply now"))
+    if tailor_store.exists(job.get("job_id")):
+        facts.append(("CV", "tailored"))
+    elif apply_queue.worth_tailoring(job, config.RESUME_CUSTOMIZATION_MIN_SCORE):
+        facts.append(("CV", "worth tailoring"))
     return facts
 
 
@@ -787,9 +792,36 @@ def render_job_body(job, all_scores=()):
         html('<div style="height:8px"></div>' + T.fix_list(wins, effort))
 
 
+def render_tailor_suggestion(job):
+    """Suggest a tailored CV for a strong match; never write one unasked.
+
+    Tailoring used to run unattended after every scoring pass. It is a suggestion
+    now: the gap interview needs you, and a CV you did not ask for is one you do
+    not read. The button only hands the job to the Write my CV page.
+    """
+    job_id = job.get("job_id")
+    if tailor_store.exists(job_id):
+        with st.container(border=True):
+            html(T.kicker("Tailored CV ready", T.PURPLE[700]))
+            if st.button("Open it", key=f"suggest_tailor_{job_id}", width="stretch"):
+                tailor_this_job(job)
+        return
+    min_score = config.RESUME_CUSTOMIZATION_MIN_SCORE
+    if not apply_queue.worth_tailoring(job, min_score):
+        return
+    with st.container(border=True):
+        html(T.kicker("Worth a tailored CV", T.PURPLE[700])
+             + f'<div style="font-size:13.5px;color:{T.NEUTRAL[800]}">Scored '
+               f'{T.esc(job.get("resume_score"))}, at or above your {min_score} bar. '
+               'A few minutes on Write my CV, starting with questions about the gaps.</div>')
+        if st.button("Write a tailored CV", key=f"suggest_tailor_{job_id}", width="stretch"):
+            tailor_this_job(job)
+
+
 def render_side_rail(job):
     """Pitch, context and the key legend — what you need while typing."""
     breakdown = job.get("score_breakdown") or {}
+    render_tailor_suggestion(job)
     pitch = job.get("why_me_pitch")
     with st.container(key="pitch-card"):
         html(T.kicker("Pitch — ready to paste", T.BLUE[800]))

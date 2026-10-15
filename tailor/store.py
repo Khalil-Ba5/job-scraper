@@ -99,6 +99,11 @@ def save(job: Dict[str, Any], result: Any,
     return path
 
 
+def exists(job_id: str) -> bool:
+    """Whether an application has been generated for this job — no parsing."""
+    return os.path.exists(_path(job_id))
+
+
 def load(job_id: str) -> Optional[Dict[str, Any]]:
     path = _path(job_id)
     if not os.path.exists(path):

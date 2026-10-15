@@ -426,6 +426,26 @@ class TestFocusQueue:
         for key, _ in apply_queue.SHORTCUTS:
             assert any(label.endswith(f"`{key}`") for label in labels), key
 
+    def test_a_strong_match_suggests_tailoring_without_doing_it(self, app, monkeypatch):
+        """The 82 clears the bar: the rail offers the CV, and the click only navigates."""
+        from tailor import store as tailor_store
+        monkeypatch.setattr(tailor_store, "exists", lambda job_id: False)
+        # The CV page fetches the full posting; nothing to fetch offline.
+        monkeypatch.setattr(supabase_utils, "get_job_with_description", lambda job_id: None)
+        app.run()
+        assert "Worth a tailored CV" in markdown_text(app)
+        app.button("suggest_tailor_j1").click().run()
+        assert not app.exception
+        assert app.session_state["page"] == "tailor"
+
+    def test_an_already_tailored_job_says_so_instead(self, app, monkeypatch):
+        from tailor import store as tailor_store
+        monkeypatch.setattr(tailor_store, "exists", lambda job_id: job_id == "j1")
+        app.run()
+        text = markdown_text(app)
+        assert "Worth a tailored CV" not in text
+        assert "Tailored CV ready" in text
+
     def test_apply_marks_the_focused_job(self, app, monkeypatch):
         calls = []
         monkeypatch.setattr(supabase_utils, "mark_job_applied",
