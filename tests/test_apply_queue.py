@@ -118,6 +118,18 @@ class TestDateWindow:
     def test_clock_skew_counts_as_brand_new(self):
         assert apply_queue.within_window(found(timedelta(minutes=-5)), "24h", NOW)
 
+    def test_a_job_scored_inside_the_window_counts_as_recent(self):
+        """Found a week ago, scored (and mailed) an hour ago: the alert must
+        point at something the default 24-hour queue shows."""
+        late = found(timedelta(days=7),
+                     score_breakdown={"scored_at": (NOW - timedelta(hours=1)).isoformat()})
+        assert apply_queue.within_window(late, "24h", NOW)
+
+    def test_an_old_score_does_not_rescue_an_old_posting(self):
+        old = found(timedelta(days=7),
+                    score_breakdown={"scored_at": (NOW - timedelta(days=6)).isoformat()})
+        assert not apply_queue.within_window(old, "24h", NOW)
+
     def test_a_naive_stamp_is_read_as_utc(self):
         naive = job("x", 80, scraped_at="2026-09-07T11:00:00")
         assert apply_queue.within_window(naive, "24h", NOW)

@@ -199,9 +199,8 @@ DATE_WINDOW_KEYS = [key for key, _ in DATE_WINDOWS]
 DEFAULT_DATE_WINDOW = "24h"
 
 
-def scraped_at(job: Dict[str, Any]) -> Optional[datetime]:
-    """The moment this posting was found, as an aware datetime, or None."""
-    raw = job.get("scraped_at")
+def _parse_stamp(raw: Any) -> Optional[datetime]:
+    """An ISO timestamp as an aware datetime (naive read as UTC), or None."""
     if not raw:
         return None
     try:
@@ -211,6 +210,17 @@ def scraped_at(job: Dict[str, Any]) -> Optional[datetime]:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def scraped_at(job: Dict[str, Any]) -> Optional[datetime]:
+    """The moment this posting was found, as an aware datetime, or None."""
+    return _parse_stamp(job.get("scraped_at"))
+
+
+def scored_at(job: Dict[str, Any]) -> Optional[datetime]:
+    """When the scorer last scored this job, or None for rows scored before the
+    stamp was kept (see supabase_utils.update_job_score)."""
+    return _parse_stamp((job.get("score_breakdown") or {}).get("scored_at"))
 
 
 def job_age(job: Dict[str, Any], now: Optional[datetime] = None) -> Optional[timedelta]:
@@ -227,6 +237,11 @@ def within_window(job: Dict[str, Any], window: str,
     """
     Is this job inside the chosen date window?
 
+    A job counts as recent if it was found *or scored* inside the window. The
+    scorer works through a backlog, so a posting found a week ago can be scored
+    today — and mailed as a match today. Judged by the scrape alone it was hidden
+    behind the default 24-hour window the moment the alert pointed at it.
+
     A job with no timestamp is kept only by "Any time" — dropping it silently
     from every other window would hide real postings, but so would pretending an
     unknown date is a fresh one.
@@ -234,9 +249,10 @@ def within_window(job: Dict[str, Any], window: str,
     span = dict(DATE_WINDOWS).get(window)
     if span is None:
         return True
-    age = job_age(job, now)
-    if age is None:
+    stamps = [t for t in (scraped_at(job), scored_at(job)) if t is not None]
+    if not stamps:
         return False
+    age = (now or datetime.now(timezone.utc)) - max(stamps)
     # A negative age is clock skew between the scraper and here — that job is
     # brand new, not out of range.
     return age <= span

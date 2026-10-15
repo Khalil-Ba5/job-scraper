@@ -471,7 +471,14 @@ def update_job_score(job_id: str, score: int, resume_score_stage: str = "initial
             "resume_score_stage": resume_score_stage
         }
         if score_breakdown:
-            update_payload["score_breakdown"] = score_breakdown
+            # Stamped into the breakdown rather than a column of its own, so it
+            # needs no migration. The queue's date window reads it: a job scraped
+            # a week ago and scored today is new to the queue, and an alert has
+            # just pointed at it.
+            update_payload["score_breakdown"] = {
+                **score_breakdown,
+                "scored_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            }
         try:
             response = supabase.table(config.SUPABASE_TABLE_NAME)\
                                .update(update_payload)\
@@ -984,6 +991,13 @@ def get_scrape_pulse(hours: int = 24, bar: int = 70) -> Optional[Dict[str, Any]]
     try:
         latest = supabase.table(config.SUPABASE_TABLE_NAME)                         .select("scraped_at, provider")                         .not_.is_("scraped_at", None)                         .order("scraped_at", desc=True)                         .limit(1)                         .execute()
         recent = supabase.table(config.SUPABASE_TABLE_NAME)                         .select("resume_score, provider")                         .gte("scraped_at", since)                         .execute()
+        # A count, not rows: the backlog runs to hundreds.
+        unscored = (supabase.table(config.SUPABASE_TABLE_NAME)
+                    .select("job_id", count="exact")
+                    .eq("is_active", True)
+                    .is_("resume_score", None)
+                    .limit(1)
+                    .execute())
     except Exception as e:
         logging.warning(f"Could not read the scrape pulse: {e}")
         return None
@@ -993,6 +1007,7 @@ def get_scrape_pulse(hours: int = 24, bar: int = 70) -> Optional[Dict[str, Any]]
         "new": len(rows),
         "cleared": sum(1 for r in rows if (r.get("resume_score") or 0) >= bar),
         "sources": sorted({r.get("provider") for r in rows if r.get("provider")}),
+        "unscored": unscored.count or 0,
     }
 
 

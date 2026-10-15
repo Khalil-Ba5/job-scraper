@@ -406,19 +406,25 @@ def hidden_by_filters(jobs):
 def render_queue_page():
     jobs = load_queue()
     if not jobs:
-        html(T.page_header("Jobs to apply", "Nothing scored is waiting."))
+        unscored = (_read(_cached_pulse, SCORE_BAR) or {}).get("unscored") or 0
+        html(T.page_header("Jobs to apply", "Nothing scored is waiting."
+                           + (f" {unscored} not scored yet." if unscored else "")))
         st.info("No scored jobs ready for application right now.")
         return
 
     total = len(jobs)
     all_scores = [j.get("resume_score") for j in jobs if j.get("resume_score") is not None]
     fresh = sum(1 for j in jobs if apply_queue.within_window(j, "24h"))
+    pulse = _read(_cached_pulse, SCORE_BAR) or {}
+    unscored = pulse.get("unscored") or 0
+    backlog = (f" {unscored} more not scored yet — they join the queue as the scorer reaches them."
+               if unscored else "")
 
     head = st.columns([3, 1.6], vertical_alignment="bottom")
     with head[0]:
         html(T.page_header(
             "Jobs to apply",
-            f"{total} scored postings waiting. <b>{fresh} arrived in the last day.</b>"))
+            f"{total} scored postings waiting. <b>{fresh} arrived in the last day.</b>{backlog}"))
     with head[1]:
         st.radio("View", ["list", "focus"], key="queue_view", horizontal=True,
                  format_func=lambda v: f"All {total}" if v == "list" else "One at a time",

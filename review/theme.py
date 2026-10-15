@@ -444,6 +444,15 @@ def mono_chips(items: Iterable[str]) -> str:
         f'background:{BG}">{esc(i)}</span>' for i in items) + "</div>")
 
 
+def _unscored_line(n: int) -> str:
+    """The scoring backlog, said whenever there is one: an unscored job is in no
+    queue and no alert, so without this line it is simply invisible."""
+    if n <= 0:
+        return ""
+    return (f'<div style="font-size:12.5px;color:{NEUTRAL[700]}">'
+            f'<b>{n}</b> job{"s" if n != 1 else ""} not scored yet</div>')
+
+
 def pulse_card(pulse: Optional[Dict[str, Any]], when: str) -> str:
     """The sidebar's 'Last scrape' box."""
     if not pulse:
@@ -457,7 +466,8 @@ def pulse_card(pulse: Optional[Dict[str, Any]], when: str) -> str:
                 f'{pulse["new"]} new postings · {pulse["cleared"]} cleared the bar</div>'
                 f'<div style="display:flex;align-items:center;gap:7px;margin-top:2px">'
                 f'<span style="width:7px;height:7px;border-radius:999px;background:{BLUE[600]};flex:none"></span>'
-                f'<span style="font-size:12.5px;color:{NEUTRAL[700]}">{esc(status)}</span></div>')
+                f'<span style="font-size:12.5px;color:{NEUTRAL[700]}">{esc(status)}</span></div>'
+                + _unscored_line(pulse.get("unscored") or 0))
     return (f'<div style="background:{BG};border-radius:16px;padding:15px 16px;display:flex;'
             f'flex-direction:column;gap:8px">{kicker("Last scrape")}{body}</div>')
 
