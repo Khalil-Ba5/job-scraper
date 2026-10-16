@@ -24,6 +24,7 @@ from review import application_pack
 from review import job_view
 from review import market
 from review import theme as T
+from review import weekly
 from clustering import results as cluster_results
 from clustering import settings as cluster_settings
 from tailor import facts as tailor_facts
@@ -355,7 +356,8 @@ FILTER_KEYS = {
 # not drawn. Go to "Write my CV" and back, and every filter is gone — the German
 # filter you set is "any" again and the 24-hour window is back. Observed, not
 # theorised: set to none/30d, one page away, returned as any/24h.
-_PERSISTENT_KEYS = ("queue_view", "sort_mode", "search_jobs", "search_applied")
+_PERSISTENT_KEYS = ("queue_view", "sort_mode", "search_jobs", "search_applied",
+                    "wk_min_score", "wk_stage", "wk_term")
 
 
 def init_filters():
@@ -1200,6 +1202,101 @@ def render_application_record(job):
         html("".join(parts))
 
 
+def render_weekly_panel(jobs):
+    """Sends this week against last week, with its own filters and saved settings.
+
+    The filters live in session state only: they answer a question for now.
+    The settings (week start, comparison, goal, history length) are a standing
+    preference, so "Save" writes them to weekly_settings.json.
+    """
+    if "wk_settings" not in st.session_state:
+        st.session_state["wk_settings"] = weekly.load_settings()
+    prefs = st.session_state["wk_settings"]
+    st.session_state.setdefault("wk_min_score", 0)
+    st.session_state.setdefault("wk_stage", "all")
+    st.session_state.setdefault("wk_term", "")
+
+    html('<div style="height:26px"></div>')
+    head = st.columns([4, 1, 1], vertical_alignment="center")
+    with head[0]:
+        html(T.kicker("Applications per week"))
+    with head[1]:
+        with st.popover("Filters", width="stretch"):
+            st.slider("Min score", 0, 100, step=5, key="wk_min_score")
+            st.selectbox("Stage", list(weekly.STAGE_FILTERS), key="wk_stage",
+                         format_func=weekly.STAGE_FILTERS.get)
+            st.text_input("Title or company", key="wk_term")
+    with head[2]:
+        with st.popover("Customize", width="stretch"):
+            with st.form("wk_settings_form", border=False):
+                week_start = st.selectbox("Week starts on", list(weekly.WEEK_STARTS),
+                                          index=list(weekly.WEEK_STARTS).index(prefs["week_start"]))
+                compare = st.radio("Compare this week with", list(weekly.COMPARE_MODES),
+                                   index=list(weekly.COMPARE_MODES).index(prefs["compare"]),
+                                   format_func=weekly.COMPARE_MODES.get,
+                                   help="'Same point last week' counts last week only up to "
+                                        "today's weekday, so a Tuesday is not judged "
+                                        "against a finished week.")
+                goal = st.number_input("Weekly goal (0 = none)", 0, 200, int(prefs["goal"]))
+                weeks = st.slider("Weeks of history", 2, 26, int(prefs["weeks"]))
+                if st.form_submit_button("Save", type="primary"):
+                    prefs = {"week_start": week_start, "compare": compare,
+                             "goal": int(goal), "weeks": int(weeks)}
+                    st.session_state["wk_settings"] = prefs
+                    try:
+                        weekly.save_settings(prefs)
+                        flash_saved("Weekly tracking settings saved.")
+                    except OSError as e:
+                        flash_failed(f"Could not save weekly settings: {e}")
+                    st.rerun()
+
+    shown = weekly.filter_jobs(jobs, min_score=st.session_state["wk_min_score"],
+                               stage=st.session_state["wk_stage"],
+                               term=st.session_state["wk_term"])
+    s = weekly.summarize(shown, weeks=prefs["weeks"],
+                         start_weekday=weekly.WEEK_STARTS[prefs["week_start"]],
+                         compare=prefs["compare"], goal=prefs["goal"])
+
+    since = s["week_start"].strftime("%a %d %b")
+    if s["goal_left"] is None:
+        this_note = f"since {since}"
+    elif s["goal_left"] == 0:
+        this_note = f"goal of {s['goal']} reached"
+    else:
+        this_note = f"{s['goal_left']} to go for {s['goal']}"
+    last_note = (f"first {s['days_elapsed']} days · {s['last_week_full']} in all"
+                 if prefs["compare"] == "pace" else "the whole week")
+    if s["last_week"]:
+        change_note = f"{s['delta'] / s['last_week']:+.0%} vs last week"
+    else:
+        change_note = "nothing to compare against" if not s["this_week"] else "up from zero"
+    html(T.stat_tiles([
+        ("This week", str(s["this_week"]), this_note),
+        ("Last week", str(s["last_week"]), last_note),
+        ("Change", f"{s['delta']:+d}", change_note),
+        ("Weekly average", f"{s['average']:.1f}", f"over the {len(s['history']) - 1} weeks before"),
+    ]))
+
+    active = [label for label, on in (
+        (f"score {st.session_state['wk_min_score']}+", st.session_state["wk_min_score"] > 0),
+        (weekly.STAGE_FILTERS[st.session_state["wk_stage"]].lower(),
+         st.session_state["wk_stage"] != "all"),
+        (f"“{st.session_state['wk_term']}”", bool(st.session_state["wk_term"].strip())),
+    ) if on]
+    if active:
+        st.caption(f"Counting {len(shown)} of {len(jobs)} applications · " + " · ".join(active))
+
+    top = max((h["n"] for h in s["history"]), default=0) or 1
+    rows = [{"label": ("This week" if i == len(s["history"]) - 1
+                       else h["start"].strftime("%d %b").lstrip("0")),
+             "share": h["n"] / top, "n": h["n"],
+             "fill": T.ACCENT if i == len(s["history"]) - 1 else T.PURPLE[300]}
+            for i, h in enumerate(s["history"])]
+    with st.expander("Week by week"):
+        html(T.bar_rows(list(reversed(rows)), label_width=96))
+    html('<div style="height:10px"></div>')
+
+
 def render_applications_page():
     jobs = load_applied()
     if not jobs:
@@ -1222,6 +1319,8 @@ def render_applications_page():
         ("Interview rate", pct(s["interview_rate"]), f"of {s['resolved']} resolved"),
         ("Offers", str(s["offers"]), f"{s['rejected']} rejected · {s['ghosted']} ghosted"),
     ]))
+
+    render_weekly_panel(jobs)
 
     render_ghost_prompt(jobs)
     render_missing_reasons_prompt(jobs)

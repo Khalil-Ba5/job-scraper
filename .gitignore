@@ -27,3 +27,6 @@ Job Hunt.html
 # files it replaces. Same personal data as the files themselves.
 onboarding_draft.json
 *.json.bak
+
+# Written by the weekly-tracking "Customize" popover on "Where I applied".
+weekly_settings.json

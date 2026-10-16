@@ -12,6 +12,7 @@ import pytest
 
 from review import apply_queue
 from review import calibration
+from review import weekly
 from db import supabase_utils
 import config
 from onboarding import status as onboarding_status
@@ -90,7 +91,7 @@ def tiles(app):
 
 
 @pytest.fixture
-def app(monkeypatch):
+def app(monkeypatch, tmp_path):
     monkeypatch.setattr(supabase_utils, "get_top_scored_jobs_to_apply",
                         lambda limit: list(FAKE_TODAY_JOBS))
     monkeypatch.setattr(supabase_utils, "get_applied_jobs_with_outcomes",
@@ -104,6 +105,8 @@ def app(monkeypatch):
     # The app's reads go through st.cache_data, which lives for the whole
     # process: without this, one test's fake rows are served to the next.
     st.cache_data.clear()
+    # Never read or overwrite the real weekly-tracking preferences.
+    monkeypatch.setattr(weekly, "SETTINGS_PATH", str(tmp_path / "weekly_settings.json"))
     return AppTest.from_file(UI_APP_PATH, default_timeout=60)
 
 
@@ -971,3 +974,39 @@ class TestSetupPage:
         values = {w.label: w.value for w in setup_app.text_input}
         assert values["What is your residence or work permit status (or citizenship), and does an "
                       "employer need to do anything?"] == "Blue Card holder"
+
+
+class TestWeeklyTracking:
+    """The per-week panel on "Where I applied"."""
+
+    def _open(self, app, monkeypatch, jobs):
+        monkeypatch.setattr(supabase_utils, "get_applied_jobs_with_outcomes",
+                            lambda limit=999: list(jobs))
+        app.run()
+        app.button("nav_apps").click().run()
+        assert not app.exception
+        return app
+
+    def test_counts_this_weeks_sends(self, app, monkeypatch):
+        jobs = FAKE_APPLIED_JOBS + [
+            {"job_id": "now", "job_title": "Fresh", "company": "Now", "resume_score": 90,
+             "application_date": _days_ago(0), "application_stage": None}]
+        self._open(app, monkeypatch, jobs)
+        assert int(tiles(app)["This week"]) >= 1
+
+    def test_filters_narrow_the_count(self, app, monkeypatch):
+        jobs = [{"job_id": "now", "job_title": "Fresh", "company": "Now", "resume_score": 50,
+                 "application_date": _days_ago(0), "application_stage": None}]
+        self._open(app, monkeypatch, jobs)
+        assert tiles(app)["This week"] == "1"
+        app.slider(key="wk_min_score").set_value(80).run()
+        assert not app.exception
+        assert tiles(app)["This week"] == "0"
+        assert any("Counting 0 of 1" in c.value for c in app.caption)
+
+    def test_saved_settings_reach_the_file(self, app, monkeypatch):
+        self._open(app, monkeypatch, FAKE_APPLIED_JOBS)
+        app.number_input[0].set_value(12)
+        app.button[[b.label for b in app.button].index("Save")].click().run()
+        assert not app.exception
+        assert weekly.load_settings()["goal"] == 12
