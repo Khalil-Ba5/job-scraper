@@ -348,7 +348,9 @@ class LLMClient:
                 # Check if it's a rate limit / quota error
                 is_rate_limit = any(keyword in error_str for keyword in [
                     "429", "rate_limit", "rate limit", "resource_exhausted",
-                    "quota", "too many requests", "retry"
+                    "quota", "too many requests", "retry",
+                    # Temporary provider overload (Gemini 503 "high demand") is worth retrying too
+                    "503", "unavailable", "high demand", "overloaded"
                 ])
 
                 if is_rate_limit and attempt < max_attempts - 1:
