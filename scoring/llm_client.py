@@ -142,7 +142,8 @@ class LLMClient:
         if provider == "openai":
             return key.startswith("sk-") and not key.startswith("sk-ant-")
         if provider in ("gemini", "google"):
-            return key.startswith("AIza")
+            # "AIza" is the classic AI Studio format; newer Google keys start with "AQ."
+            return key.startswith(("AIza", "AQ."))
         if provider == "groq":
             return key.startswith("gsk_")
         # Unknown provider/key format: don't override env vars
