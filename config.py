@@ -59,12 +59,12 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("GEMINI_API_KEY") 
 # --- LLM Settings ---
 # Use any model supported by LiteLLM (gemini, openai/gpt-4o-mini, groq/llama-3.3-70b-versatile)
 # Full list of supported models & naming: https://docs.litellm.ai/docs/providers
-LLM_MODEL = os.environ.get("LLM_MODEL") or "gemini/gemini-2.5-pro"
+LLM_MODEL = os.environ.get("LLM_MODEL") or "gemini/gemini-3.1-pro-preview"
 
 # Cheap fast model for the pre-scoring screen pass (hard gates + rough band).
 # Only jobs that pass the screen get the full (expensive) scoring call.
 SCREENING_ENABLED = True
-LLM_SCREEN_MODEL = os.environ.get("LLM_SCREEN_MODEL") or "gemini/gemini-2.5-flash"
+LLM_SCREEN_MODEL = os.environ.get("LLM_SCREEN_MODEL") or "gemini/gemini-3.5-flash"
 # Per-RUN, and the pipeline runs four times a day. The screen cap is the
 # pipeline's throughput, not its spend: intake runs at about 100 jobs a day, and
 # at 40 a run (160 a day) any burst left a backlog that took weeks to drain — 764
